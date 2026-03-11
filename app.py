@@ -34,9 +34,15 @@ if hasattr(st, "experimental_user") and getattr(st.experimental_user, "is_logged
 if owner_email != "local_user" and current_user != owner_email:
     st.warning("Authentication required to use this application.")
     
-    # Temporary debug flag to see what Streamlit thinks our email is:
-    if hasattr(st, "experimental_user"):
-        st.info(f"Debug Info: Streamlit sees your email as: '{current_user}'")
+    # Force full debug output to diagnose the environment
+    st.info(f"Debug Info: Streamlit resolved your current_user variable as: '{current_user}'.")
+    try:
+        if hasattr(st, "experimental_user"):
+            st.code(st.experimental_user.to_dict())
+        else:
+            st.error("Streamlit Cloud does not currently have the `st.experimental_user` attribute available.")
+    except Exception as e:
+        st.error(f"Error reading user: {e}")
         
     try:
         if hasattr(st, "login"):
