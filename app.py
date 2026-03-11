@@ -33,12 +33,17 @@ if hasattr(st, "experimental_user") and getattr(st.experimental_user, "is_logged
 # Restrict Access
 if owner_email != "local_user" and current_user != owner_email:
     st.warning("Authentication required to use this application.")
+    
+    # Temporary debug flag to see what Streamlit thinks our email is:
+    if hasattr(st, "experimental_user"):
+        st.info(f"Debug Info: Streamlit sees your email as: '{current_user}'")
+        
     try:
         if hasattr(st, "login"):
             st.login()
     except Exception:
         pass
-    st.error(f"Unauthorized: Access restricted to {owner_email}.")
+    st.error("Unauthorized: Access restricted to the application owner.")
     st.stop()
 
 # --- DB Initialization / Fetching ---
