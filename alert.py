@@ -33,11 +33,11 @@ if "user_email" not in df_all.columns:
     print("Database is empty or missing columns.")
     exit(0)
 
-# Get current user's "Buying" orders
+# Get current user's active orders
 df = df_all[df_all["user_email"] == owner_email]
-buying_df = df[df["status"] == "Buying"]
+active_df = df[df["status"].isin(["Buying", "Selling"])]
 
-if buying_df.empty:
+if active_df.empty:
     print("No active orders found. Exiting.")
     exit(0)
 
@@ -54,25 +54,37 @@ except Exception as e:
 
 alerts_to_send = []
 
-for idx, row in buying_df.iterrows():
+for idx, row in active_df.iterrows():
     item_id = str(row["item_id"])
     item_name = row["item_name"]
     order_price = int(row["price"])
     qty = int(row["quantity"])
+    status = row["status"]
     
     live_data = prices_data.get(item_id, {})
     current_low = live_data.get("low", 0)
+    current_high = live_data.get("high", 0)
     
-    # If the current low in the market is higher than our bid, we are buried!
-    # (Because the target buy is current_low + 1)
-    if current_low > 0 and current_low > order_price:
-        diff = current_low - order_price
-        alerts_to_send.append(
-            f"⚠️ **{item_name}** ({qty}x)\n"
-            f"> Your Bid: `{order_price:,} GP`\n"
-            f"> Current Low: `{current_low:,} GP`\n"
-            f"> *You are underbid by {diff:,} GP!*"
-        )
+    if status == "Buying":
+        # If the current low in the market is higher than our bid, we are buried!
+        if current_low > 0 and current_low > order_price:
+            diff = current_low - order_price
+            alerts_to_send.append(
+                f"⚠️ **[BUY] {item_name}** ({qty}x)\n"
+                f"> Your Bid: `{order_price:,} GP`\n"
+                f"> Current Low: `{current_low:,} GP`\n"
+                f"> *You are underbid by {diff:,} GP!*"
+            )
+    elif status == "Selling":
+        # If the current high in the market involves an undercut, we are buried!
+        if current_high > 0 and current_high < order_price:
+            diff = order_price - current_high
+            alerts_to_send.append(
+                f"⚠️ **[SELL] {item_name}** ({qty}x)\n"
+                f"> Your Ask: `{order_price:,} GP`\n"
+                f"> Current High: `{current_high:,} GP`\n"
+                f"> *You are undercut by {diff:,} GP!*"
+            )
 
 # Send Discord Webhook
 if alerts_to_send:

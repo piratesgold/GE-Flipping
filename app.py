@@ -141,11 +141,31 @@ set_stale = data_is_stale
 net_profit = (target_sell * 0.98) - sum_target_buys
 break_even = sum_target_buys / 0.98 if sum_target_buys > 0 else 0
 
-col1, col2 = st.columns(2)
+col1, col2 = st.columns([2, 1])
 with col1:
     st.metric("Total Bid (Sum)", f"{sum_target_buys:,.0f} GP")
-with col2:
+    
+col3, col4 = st.columns([2, 1])
+with col3:
     st.metric("Target Ask (Set)", f"{target_sell:,.0f} GP")
+with col4:
+    with st.popover("Sell Set", use_container_width=True):
+        st.write("List Set(s) on GE")
+        sell_qty = st.number_input("Qty", min_value=1, value=1, step=1, key="sell_set_qty")
+        if st.button("Submit Sell Order", key="submit_sell_set", use_container_width=True):
+            existing_idx = df_all[(df_all["user_email"] == current_user) & (df_all["item_id"] == SET_ID) & (df_all["status"] == "Selling")].index
+            if not existing_idx.empty:
+                idx = existing_idx[0]
+                df_all.at[idx, "quantity"] += int(sell_qty)
+                df_all.at[idx, "price"] = int(target_sell)
+            else:
+                new_row = {"user_email": current_user, "item_id": SET_ID, "item_name": ITEMS[SET_ID], "price": int(target_sell), "quantity": int(sell_qty), "status": "Selling", "timestamp": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())}
+                df_all = pd.concat([df_all, pd.DataFrame([new_row])], ignore_index=True)
+            conn.update(worksheet="Sheet1", data=df_all)
+            st.cache_data.clear()
+            st.success("Set sell order placed!")
+            time.sleep(0.5)
+            st.rerun()
 
 profit_color = "green" if net_profit > 0 else "red"
 st.markdown(f"<h3 style='text-align: center'>Net Profit: <span style='color:{profit_color}'>{net_profit:,.0f} GP</span></h3>", unsafe_allow_html=True)
@@ -163,23 +183,23 @@ for c in components_data:
     with col_item:
         st.markdown(f"**{c['name']}**<br/>{c['target_buy']:,.0f} GP{stale_text}", unsafe_allow_html=True)
     with col_btn:
-        if st.button("Order 1", key=f"buy_{c['id']}", use_container_width=True):
-            new_row = {
-                "user_email": current_user,
-                "item_id": int(c['id']),
-                "item_name": c['name'],
-                "price": int(c['target_buy']),
-                "quantity": 1,
-                "status": "Buying",
-                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-            }
-            new_df = pd.DataFrame([new_row])
-            updated_df = pd.concat([df_all, new_df], ignore_index=True)
-            conn.update(worksheet="Sheet1", data=updated_df)
-            st.cache_data.clear()
-            st.success(f"Ordered 1x {c['name']}")
-            time.sleep(0.5)
-            st.rerun()
+        with st.popover("Order", use_container_width=True):
+            st.write(f"Buy {c['name']}")
+            comp_qty = st.number_input("Qty", min_value=1, value=1, step=1, key=f"buy_qty_{c['id']}")
+            if st.button("Submit Buy Order", key=f"buy_{c['id']}", use_container_width=True):
+                existing_idx = df_all[(df_all["user_email"] == current_user) & (df_all["item_id"] == c['id']) & (df_all["status"] == "Buying")].index
+                if not existing_idx.empty:
+                    idx = existing_idx[0]
+                    df_all.at[idx, "quantity"] += int(comp_qty)
+                    df_all.at[idx, "price"] = int(c['target_buy'])
+                else:
+                    new_row = {"user_email": current_user, "item_id": int(c['id']), "item_name": c['name'], "price": int(c['target_buy']), "quantity": int(comp_qty), "status": "Buying", "timestamp": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())}
+                    df_all = pd.concat([df_all, pd.DataFrame([new_row])], ignore_index=True)
+                conn.update(worksheet="Sheet1", data=df_all)
+                st.cache_data.clear()
+                st.success(f"Ordered {comp_qty}x {c['name']}")
+                time.sleep(0.5)
+                st.rerun()
 
 st.divider()
 
@@ -212,19 +232,36 @@ with st.expander("Log Transaction", expanded=False):
             time.sleep(1)
             st.rerun()
 
-st.subheader("Active Orders (Buying)")
-buying_df = df[df["status"] == "Buying"]
-if not buying_df.empty:
-    for idx, row in buying_df.iterrows():
+st.subheader("Active Orders")
+active_df = df[df["status"].isin(["Buying", "Selling"])]
+if not active_df.empty:
+    for idx, row in active_df.iterrows():
         with st.container(border=True):
-            st.markdown(f"**{row['item_name']}** &mdash; {row['quantity']}x @ {row['price']:,.0f} GP")
+            color = "green" if row["status"] == "Buying" else "red"
+            st.markdown(f"**<span style='color:{color}'>{row['status']}</span> {row['item_name']}** &mdash; {row['quantity']}x @ {row['price']:,.0f} GP", unsafe_allow_html=True)
             colA, colB, colC = st.columns(3)
             with colA:
-                if st.button("✅ Fill", key=f"fill_{idx}", use_container_width=True):
-                    df_all.at[idx, "status"] = "Owned"
-                    conn.update(worksheet="Sheet1", data=df_all)
-                    st.cache_data.clear()
-                    st.rerun()
+                with st.popover("✅ Fill", use_container_width=True):
+                    max_q = int(row['quantity'])
+                    fill_qty = st.number_input("Qty to Fill", min_value=1, max_value=max_q, value=max_q, step=1, key=f"fillq_{idx}")
+                    if st.button("Confirm Fill", key=f"fillbtn_{idx}", use_container_width=True):
+                        # Deduct from active
+                        if fill_qty == max_q:
+                            df_all = df_all.drop(index=idx)
+                        else:
+                            df_all.at[idx, "quantity"] = max_q - fill_qty
+                            
+                        # Add to filled
+                        new_status = "Owned" if row["status"] == "Buying" else "Sold"
+                        filled_row = row.copy()
+                        filled_row["quantity"] = fill_qty
+                        filled_row["status"] = new_status
+                        filled_row["timestamp"] = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+                        df_all = pd.concat([df_all, pd.DataFrame([filled_row])], ignore_index=True)
+                        
+                        conn.update(worksheet="Sheet1", data=df_all)
+                        st.cache_data.clear()
+                        st.rerun()
             with colB:
                 with st.popover("✏️ Edit", use_container_width=True):
                     new_qty = st.number_input("Qty", value=int(row["quantity"]), min_value=1, step=1, key=f"qty_{idx}")
@@ -242,7 +279,7 @@ if not buying_df.empty:
                     st.cache_data.clear()
                     st.rerun()
 else:
-    st.info("No active buy orders.")
+    st.info("No active orders.")
 
 st.divider()
 
