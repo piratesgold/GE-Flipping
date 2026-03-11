@@ -286,6 +286,11 @@ if not active_df.empty:
                         if st.button(f"Reset to {target_p:,}", key=f"reset_{idx}", use_container_width=True):
                             df_all.at[idx, "price"] = int(target_p)
                             conn.update(worksheet="Sheet1", data=df_all)
+                            # Clear the Streamlit widget state so the number inputs update visually
+                            if f"qty_{idx}" in st.session_state:
+                                del st.session_state[f"qty_{idx}"]
+                            if f"prc_{idx}" in st.session_state:
+                                del st.session_state[f"prc_{idx}"]
                             st.cache_data.clear()
                             st.rerun()
 
