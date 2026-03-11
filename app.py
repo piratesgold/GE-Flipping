@@ -49,10 +49,10 @@ try:
     df_all = conn.read(worksheet="Sheet1", ttl=0)
     df_all = df_all.dropna(how="all")
     if "user_email" not in df_all.columns:
-        df_all = pd.DataFrame(columns=["user_email", "item_id", "item_name", "price", "quantity", "status", "timestamp"])
+        df_all = pd.DataFrame(columns=["user_email", "item_id", "item_name", "price", "quantity", "status", "timestamp", "last_alert_price"])
 except Exception as e:
     # Fallback to empty DataFrame if sheet doesn't exist or is completely empty
-    df_all = pd.DataFrame(columns=["user_email", "item_id", "item_name", "price", "quantity", "status", "timestamp"])
+    df_all = pd.DataFrame(columns=["user_email", "item_id", "item_name", "price", "quantity", "status", "timestamp", "last_alert_price"])
 
 # Sanitize formatting from fresh gsheets reads
 df_all["item_id"] = pd.to_numeric(df_all["item_id"], errors='coerce').fillna(0).astype(int)
@@ -109,8 +109,8 @@ def is_stale():
     # Stale if we haven't successfully fetched in over 120 seconds
     return (current_time - fetch_time) > 120
 
-# --- Penny-Pincher Engine ---
-st.header("The Penny-Pincher Engine")
+# --- GE Flips Engine ---
+st.header("GE Flips")
 
 sum_target_buys = 0
 components_data = []

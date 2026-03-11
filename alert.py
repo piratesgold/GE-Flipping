@@ -53,6 +53,7 @@ except Exception as e:
     exit(1)
 
 alerts_to_send = []
+df_updated = False
 
 for idx, row in active_df.iterrows():
     item_id = str(row["item_id"])
@@ -60,42 +61,62 @@ for idx, row in active_df.iterrows():
     order_price = int(row["price"])
     qty = int(row["quantity"])
     status = row["status"]
+    last_alert = row.get("last_alert_price")
+    
+    # Handle NaNs from sheets
+    if pd.isna(last_alert):
+        last_alert = 0
+    else:
+        last_alert = int(last_alert)
     
     live_data = prices_data.get(item_id, {})
-    current_low = live_data.get("low", 0)
-    current_high = live_data.get("high", 0)
+    current_low = int(live_data.get("low", 0))
+    current_high = int(live_data.get("high", 0))
+    
+    msg = None
+    market_price = 0
     
     if status == "Buying":
         # If the current low in the market is higher than our bid, we are buried!
         if current_low > 0 and current_low > order_price:
-            diff = current_low - order_price
-            alerts_to_send.append(
-                f"⚠️ **[BUY] {item_name}** ({qty}x)\n"
-                f"> Your Bid: `{order_price:,} GP`\n"
-                f"> Current Low: `{current_low:,} GP`\n"
-                f"> *You are underbid by {diff:,} GP!*"
-            )
+            market_price = current_low
+            if market_price != last_alert:
+                diff = current_low - order_price
+                msg = (f"⚠️ **[BUY] {item_name}** ({qty}x)\n"
+                       f"> Your Bid: `{order_price:,} GP`\n"
+                       f"> Current Low: `{current_low:,} GP`\n"
+                       f"> *You are underbid by {diff:,} GP!*")
     elif status == "Selling":
         # If the current high in the market involves an undercut, we are buried!
         if current_high > 0 and current_high < order_price:
-            diff = order_price - current_high
-            alerts_to_send.append(
-                f"⚠️ **[SELL] {item_name}** ({qty}x)\n"
-                f"> Your Ask: `{order_price:,} GP`\n"
-                f"> Current High: `{current_high:,} GP`\n"
-                f"> *You are undercut by {diff:,} GP!*"
-            )
+            market_price = current_high
+            if market_price != last_alert:
+                diff = order_price - current_high
+                msg = (f"⚠️ **[SELL] {item_name}** ({qty}x)\n"
+                       f"> Your Ask: `{order_price:,} GP`\n"
+                       f"> Current High: `{current_high:,} GP`\n"
+                       f"> *You are undercut by {diff:,} GP!*")
+
+    if msg:
+        alerts_to_send.append(msg)
+        df_all.at[idx, "last_alert_price"] = market_price
+        df_updated = True
 
 # Send Discord Webhook
 if alerts_to_send:
     print(f"Sending {len(alerts_to_send)} alerts to Discord...")
     payload = {
-        "content": "🔔 **Penny-Pincher Alert**\n" + "\n\n".join(alerts_to_send)
+        "content": "🔔 **GE Flips Alert**\n" + "\n\n".join(alerts_to_send)
     }
     push_resp = requests.post(webhook_url, json=payload)
     if push_resp.status_code == 204:
         print("Webhook sent successfully.")
     else:
         print(f"Failed to send webhook: {push_resp.status_code} {push_resp.text}")
+
+# Only update the sheet if we actually changed the alert state
+if df_updated:
+    print("Updating alert state in Google Sheets...")
+    conn.update(worksheet="Sheet1", data=df_all)
 else:
-    print("All orders are currently competitive. No alerts sent.")
+    print("No new alerts. Sheet remains unchanged.")
