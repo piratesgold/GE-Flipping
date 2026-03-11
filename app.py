@@ -22,35 +22,26 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Authentication logic (Streamlit >= 1.40 Google Auth)
+# Authentication logic
+app_password = st.secrets.get("APP_PASSWORD", "")
 owner_email = st.secrets.get("OWNER_EMAIL", "local_user")
 
-# Determine current user
-current_user = "local_user"
-if hasattr(st, "experimental_user") and getattr(st.experimental_user, "is_logged_in", False):
-    current_user = st.experimental_user.email
+if "authenticated" not in st.session_state:
+    st.session_state["authenticated"] = False
 
-# Restrict Access
-if owner_email != "local_user" and current_user != owner_email:
-    st.warning("Authentication required to use this application.")
-    
-    # Force full debug output to diagnose the environment
-    st.info(f"Debug Info: Streamlit resolved your current_user variable as: '{current_user}'.")
-    try:
-        if hasattr(st, "experimental_user"):
-            st.code(st.experimental_user.to_dict())
+if app_password and not st.session_state["authenticated"]:
+    st.warning("🔒 Authentication Required")
+    pwd_input = st.text_input("Enter Dashboard Password", type="password")
+    if st.button("Unlock", use_container_width=True):
+        if pwd_input == app_password:
+            st.session_state["authenticated"] = True
+            st.rerun()
         else:
-            st.error("Streamlit Cloud does not currently have the `st.experimental_user` attribute available.")
-    except Exception as e:
-        st.error(f"Error reading user: {e}")
-        
-    try:
-        if hasattr(st, "login"):
-            st.login()
-    except Exception:
-        pass
-    st.error("Unauthorized: Access restricted to the application owner.")
+            st.error("Incorrect Password")
     st.stop()
+
+# If authenticated, use the owner_email for the database records
+current_user = owner_email
 
 # --- DB Initialization / Fetching ---
 try:
