@@ -277,17 +277,18 @@ if not active_df.empty:
                         st.cache_data.clear()
                         st.rerun()
             with colB:
+                def set_reset_state(i, p):
+                    st.session_state[f"prc_{i}"] = int(p)
+                    
                 with st.popover("✏️ Edit", use_container_width=True):
                     new_qty = st.number_input("Qty", value=int(row["quantity"]), min_value=1, step=1, key=f"qty_{idx}")
                     new_price = st.number_input("Price (GP)", value=int(row["price"]), min_value=0, step=1000, key=f"prc_{idx}")
                     
                     target_p = target_prices.get(row['item_id'], 0)
                     if target_p > 0:
-                        if st.button(f"Reset to {target_p:,}", key=f"reset_{idx}", use_container_width=True):
+                        if st.button(f"Reset to {target_p:,}", key=f"reset_{idx}", on_click=set_reset_state, args=(idx, target_p), use_container_width=True):
                             df_all.at[idx, "price"] = int(target_p)
                             conn.update(worksheet="Sheet1", data=df_all)
-                            # Force the widget to display the new target price via session state
-                            st.session_state[f"prc_{idx}"] = int(target_p)
                             st.cache_data.clear()
                             st.rerun()
 
