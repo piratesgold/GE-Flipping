@@ -46,7 +46,7 @@ current_user = owner_email
 # --- DB Initialization / Fetching ---
 try:
     conn = st.connection("gsheets", type=GSheetsConnection)
-    df_all = conn.read(worksheet="Sheet1")
+    df_all = conn.read(worksheet="Sheet1", ttl=0)
     df_all = df_all.dropna(how="all")
     if "user_email" not in df_all.columns:
         df_all = pd.DataFrame(columns=["user_email", "item_id", "item_name", "price", "quantity", "status", "timestamp"])
@@ -159,7 +159,27 @@ st.divider()
 st.subheader("Component Target Bids")
 for c in components_data:
     stale_text = " ⚠️ **STALE**" if c["stale"] else ""
-    st.write(f"- **{c['name']}**: {c['target_buy']:,.0f} GP{stale_text}")
+    col_item, col_btn = st.columns([2, 1])
+    with col_item:
+        st.markdown(f"**{c['name']}**<br/>{c['target_buy']:,.0f} GP{stale_text}", unsafe_allow_html=True)
+    with col_btn:
+        if st.button("Buy 1", key=f"buy_{c['id']}", use_container_width=True):
+            new_row = {
+                "user_email": current_user,
+                "item_id": int(c['id']),
+                "item_name": c['name'],
+                "price": int(c['target_buy']),
+                "quantity": 1,
+                "status": "Buying",
+                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+            }
+            new_df = pd.DataFrame([new_row])
+            updated_df = pd.concat([df_all, new_df], ignore_index=True)
+            conn.update(worksheet="Sheet1", data=updated_df)
+            st.cache_data.clear()
+            st.success(f"Ordered 1x {c['name']}")
+            time.sleep(0.5)
+            st.rerun()
 
 st.divider()
 
@@ -191,6 +211,40 @@ with st.expander("Log Transaction", expanded=False):
             st.success("Transaction Logged!")
             time.sleep(1)
             st.rerun()
+
+st.subheader("Active Orders (Buying)")
+buying_df = df[df["status"] == "Buying"]
+if not buying_df.empty:
+    for idx, row in buying_df.iterrows():
+        with st.container(border=True):
+            st.markdown(f"**{row['item_name']}** &mdash; {row['quantity']}x @ {row['price']:,.0f} GP")
+            colA, colB, colC = st.columns(3)
+            with colA:
+                if st.button("✅ Fill", key=f"fill_{idx}", use_container_width=True):
+                    df_all.at[idx, "status"] = "Owned"
+                    conn.update(worksheet="Sheet1", data=df_all)
+                    st.cache_data.clear()
+                    st.rerun()
+            with colB:
+                with st.popover("✏️ Edit", use_container_width=True):
+                    new_qty = st.number_input("Qty", value=int(row["quantity"]), min_value=1, step=1, key=f"qty_{idx}")
+                    new_price = st.number_input("Price (GP)", value=int(row["price"]), min_value=0, step=1000, key=f"prc_{idx}")
+                    if st.button("Update", key=f"upd_{idx}", use_container_width=True):
+                        df_all.at[idx, "quantity"] = int(new_qty)
+                        df_all.at[idx, "price"] = int(new_price)
+                        conn.update(worksheet="Sheet1", data=df_all)
+                        st.cache_data.clear()
+                        st.rerun()
+            with colC:
+                if st.button("❌ Drop", key=f"drop_{idx}", use_container_width=True):
+                    df_all = df_all.drop(index=idx)
+                    conn.update(worksheet="Sheet1", data=df_all)
+                    st.cache_data.clear()
+                    st.rerun()
+else:
+    st.info("No active buy orders.")
+
+st.divider()
 
 st.subheader("Inventory Work-in-Progress")
 if not df.empty:
