@@ -121,7 +121,7 @@ data_is_stale = is_stale()
 for cid in COMPONENTS:
     d = get_item_data(cid)
     raw_low = d.get("low", 0)
-    target_buy = raw_low + 1 if raw_low > 0 else 0
+    target_buy = raw_low + 1172 if raw_low > 0 else 0
     
     components_data.append({
         "id": cid,
