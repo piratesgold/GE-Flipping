@@ -77,25 +77,54 @@ for idx, row in active_df.iterrows():
     market_price = 0
     
     if status == "Buying":
-        # If the current low in the market is higher than our bid, we are buried!
-        if current_low > 0 and current_low > order_price:
-            market_price = current_low
-            if market_price != last_alert:
-                diff = current_low - order_price
-                msg = (f"⚠️ **[BUY] {item_name}** ({qty}x)\n"
-                       f"> Your Bid: `{order_price:,} GP`\n"
-                       f"> Current Low: `{current_low:,} GP`\n"
-                       f"> *You are underbid by {diff:,} GP!*")
+        if current_low > 0:
+            # If the current low in the market is higher than our bid, we are buried!
+            if current_low > order_price:
+                market_price = current_low
+                if market_price != last_alert:
+                    diff = current_low - order_price
+                    msg = (f"⚠️ **[OUTBID] {item_name}** ({qty}x)\n"
+                           f"> Your Bid: `{order_price:,} GP`\n"
+                           f"> Current Low: `{current_low:,} GP`\n"
+                           f"> *You are outbid by {diff:,} GP!*")
+            # If the current low hits our bid or goes under, a trade happened at or below our price
+            elif current_low <= order_price:
+                market_price = current_low
+                if market_price != last_alert:
+                    # Suppress false positives on brand new orders where the old trade was lower
+                    if last_alert == 0 and current_low < order_price:
+                        df_all.at[idx, "last_alert_price"] = market_price
+                        df_updated = True
+                    else:
+                        msg = (f"✅ **[LIKELY FILLED] {item_name}** ({qty}x)\n"
+                               f"> Your Bid: `{order_price:,} GP`\n"
+                               f"> Current Low: `{current_low:,} GP`\n"
+                               f"> *The price hit {current_low:,} GP. Your order is likely filled!*")
+
     elif status == "Selling":
-        # If the current high in the market involves an undercut, we are buried!
-        if current_high > 0 and current_high < order_price:
-            market_price = current_high
-            if market_price != last_alert:
-                diff = order_price - current_high
-                msg = (f"⚠️ **[SELL] {item_name}** ({qty}x)\n"
-                       f"> Your Ask: `{order_price:,} GP`\n"
-                       f"> Current High: `{current_high:,} GP`\n"
-                       f"> *You are undercut by {diff:,} GP!*")
+        if current_high > 0:
+            # If the current high in the market is lower than our ask, we are undercut!
+            if current_high < order_price:
+                market_price = current_high
+                if market_price != last_alert:
+                    diff = order_price - current_high
+                    msg = (f"⚠️ **[UNDERCUT] {item_name}** ({qty}x)\n"
+                           f"> Your Ask: `{order_price:,} GP`\n"
+                           f"> Current High: `{current_high:,} GP`\n"
+                           f"> *You are undercut by {diff:,} GP!*")
+            # If the current high hits our ask or goes over, a trade happened at or above our price
+            elif current_high >= order_price:
+                market_price = current_high
+                if market_price != last_alert:
+                    # Suppress false positives on brand new orders where the old trade was higher
+                    if last_alert == 0 and current_high > order_price:
+                        df_all.at[idx, "last_alert_price"] = market_price
+                        df_updated = True
+                    else:
+                        msg = (f"✅ **[LIKELY SOLD] {item_name}** ({qty}x)\n"
+                               f"> Your Ask: `{order_price:,} GP`\n"
+                               f"> Current High: `{current_high:,} GP`\n"
+                               f"> *The price hit {current_high:,} GP. Your set is likely sold!*")
 
     if msg:
         alerts_to_send.append(msg)
