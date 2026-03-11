@@ -1,0 +1,9 @@
+# Ignore database file so it doesn't get uploaded to the public internet
+ledger.db
+
+# Python
+__pycache__/
+*.pyc
+
+# Streamlit secrets (these will be entered safely in the web dashboard instead)
+.streamlit/secrets.toml
