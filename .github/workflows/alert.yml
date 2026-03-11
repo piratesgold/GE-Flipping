@@ -1,0 +1,32 @@
+name: 30-Minute Price Alerts
+
+on:
+  schedule:
+    # Runs every 30 minutes
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+    # Allows for manual triggering from the GitHub UI for testing
+
+jobs:
+  run-alert-script:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Setup Streamlit Secrets
+        run: |
+          mkdir -p .streamlit
+          echo "${{ secrets.STREAMLIT_SECRETS }}" > .streamlit/secrets.toml
+
+      - name: Run Alert script
+        run: python alert.py

@@ -163,7 +163,7 @@ for c in components_data:
     with col_item:
         st.markdown(f"**{c['name']}**<br/>{c['target_buy']:,.0f} GP{stale_text}", unsafe_allow_html=True)
     with col_btn:
-        if st.button("Buy 1", key=f"buy_{c['id']}", use_container_width=True):
+        if st.button("Order 1", key=f"buy_{c['id']}", use_container_width=True):
             new_row = {
                 "user_email": current_user,
                 "item_id": int(c['id']),
@@ -248,8 +248,8 @@ st.divider()
 
 st.subheader("Inventory Work-in-Progress")
 if not df.empty:
-    # We consider "Owned" or "Buying" as incoming inventory logic
-    incoming_df = df[df["status"].isin(["Owned", "Buying"])]
+    # Inventory only counts items we officially own
+    incoming_df = df[df["status"] == "Owned"]
     incoming_counts = incoming_df.groupby("item_id")["quantity"].sum().to_dict()
     
     sold_df = df[df["status"] == "Sold"]
