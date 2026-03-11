@@ -1,8 +1,8 @@
 import streamlit as st
 import requests
-import sqlite3
 import time
 import pandas as pd
+from streamlit_gsheets import GSheetsConnection
 
 # Mobile optimization: centered layout, collapsed sidebar
 st.set_page_config(page_title="Gilded Set-Master", layout="centered", initial_sidebar_state="collapsed")
@@ -23,6 +23,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Authentication logic (Streamlit >= 1.40 Google Auth)
+owner_email = st.secrets.get("OWNER_EMAIL", "local_user")
 try:
     if hasattr(st, "login"):
         if hasattr(st, "experimental_user") and not getattr(st.experimental_user, "is_logged_in", True):
@@ -31,41 +32,34 @@ try:
 except Exception as e:
     st.warning(f"Local Environment: Authentication skipped or not configured. To fix: Set up secrets.toml [auth].")
 
-# --- DB Initialization ---
-DB_FILE = "ledger.db"
-
-def init_db():
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    # Create the modern transactions table with user_email
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS transactions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_email TEXT,
-            item_id INTEGER,
-            item_name TEXT,
-            price INTEGER,
-            quantity INTEGER,
-            status TEXT,
-            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-    
-    # Simple migration if user_email column is missing from previous run
-    try:
-        c.execute("ALTER TABLE transactions ADD COLUMN user_email TEXT DEFAULT 'local_user'")
-    except sqlite3.OperationalError:
-        pass # Column already exists
-        
-    conn.commit()
-    conn.close()
-
-init_db()
-
 # Determine current user
 current_user = "local_user"
 if hasattr(st, "experimental_user") and getattr(st.experimental_user, "is_logged_in", False):
     current_user = st.experimental_user.email
+
+# Restrict Access
+if owner_email != "local_user" and current_user != "local_user" and current_user != owner_email:
+    st.error(f"Unauthorized: This application is restricted to {owner_email}.")
+    st.stop()
+
+# --- DB Initialization / Fetching ---
+try:
+    conn = st.connection("gsheets", type=GSheetsConnection)
+    df_all = conn.read(worksheet="Sheet1")
+    df_all = df_all.dropna(how="all")
+    if "user_email" not in df_all.columns:
+        df_all = pd.DataFrame(columns=["user_email", "item_id", "item_name", "price", "quantity", "status", "timestamp"])
+except Exception as e:
+    # Fallback to empty DataFrame if sheet doesn't exist or is completely empty
+    df_all = pd.DataFrame(columns=["user_email", "item_id", "item_name", "price", "quantity", "status", "timestamp"])
+
+# Sanitize formatting from fresh gsheets reads
+df_all["item_id"] = pd.to_numeric(df_all["item_id"], errors='coerce').fillna(0).astype(int)
+df_all["price"] = pd.to_numeric(df_all["price"], errors='coerce').fillna(0).astype(int)
+df_all["quantity"] = pd.to_numeric(df_all["quantity"], errors='coerce').fillna(0).astype(int)
+
+# Filter for current user securely
+df = df_all[df_all["user_email"] == current_user]
 
 ITEMS = {
     3481: "Gilded platebody",
@@ -179,20 +173,23 @@ with st.expander("Log Transaction", expanded=False):
         tx_status = st.selectbox("Status", ["Buying", "Owned", "Sold"])
         
         if st.form_submit_button("Log Entry", use_container_width=True):
-            conn = sqlite3.connect(DB_FILE)
-            c = conn.cursor()
             item_id = [k for k, v in ITEMS.items() if v == tx_item][0]
-            c.execute("INSERT INTO transactions (user_email, item_id, item_name, price, quantity, status) VALUES (?, ?, ?, ?, ?, ?)",
-                      (current_user, item_id, tx_item, int(tx_price), int(tx_quantity), tx_status))
-            conn.commit()
-            conn.close()
+            new_row = {
+                "user_email": current_user,
+                "item_id": int(item_id),
+                "item_name": tx_item,
+                "price": int(tx_price),
+                "quantity": int(tx_quantity),
+                "status": tx_status,
+                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+            }
+            new_df = pd.DataFrame([new_row])
+            updated_df = pd.concat([df_all, new_df], ignore_index=True)
+            conn.update(worksheet="Sheet1", data=updated_df)
+            st.cache_data.clear()
             st.success("Transaction Logged!")
             time.sleep(1)
             st.rerun()
-
-conn = sqlite3.connect(DB_FILE)
-df = pd.read_sql_query("SELECT * FROM transactions WHERE user_email=?", conn, params=(current_user,))
-conn.close()
 
 st.subheader("Inventory Work-in-Progress")
 if not df.empty:
