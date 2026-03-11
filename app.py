@@ -24,13 +24,6 @@ st.markdown("""
 
 # Authentication logic (Streamlit >= 1.40 Google Auth)
 owner_email = st.secrets.get("OWNER_EMAIL", "local_user")
-try:
-    if hasattr(st, "login"):
-        if hasattr(st, "experimental_user") and not getattr(st.experimental_user, "is_logged_in", True):
-            st.login()
-            st.stop()
-except Exception as e:
-    st.warning(f"Local Environment: Authentication skipped or not configured. To fix: Set up secrets.toml [auth].")
 
 # Determine current user
 current_user = "local_user"
@@ -38,8 +31,14 @@ if hasattr(st, "experimental_user") and getattr(st.experimental_user, "is_logged
     current_user = st.experimental_user.email
 
 # Restrict Access
-if owner_email != "local_user" and current_user != "local_user" and current_user != owner_email:
-    st.error(f"Unauthorized: This application is restricted to {owner_email}.")
+if owner_email != "local_user" and current_user != owner_email:
+    st.warning("Authentication required to use this application.")
+    try:
+        if hasattr(st, "login"):
+            st.login()
+    except Exception:
+        pass
+    st.error(f"Unauthorized: Access restricted to {owner_email}.")
     st.stop()
 
 # --- DB Initialization / Fetching ---
