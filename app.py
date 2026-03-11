@@ -233,12 +233,26 @@ with st.expander("Log Transaction", expanded=False):
             st.rerun()
 
 st.subheader("Active Orders")
+
+target_prices = {c['id']: c['target_buy'] for c in components_data}
+target_prices[SET_ID] = target_sell
+
 active_df = df[df["status"].isin(["Buying", "Selling"])]
 if not active_df.empty:
     for idx, row in active_df.iterrows():
         with st.container(border=True):
-            color = "green" if row["status"] == "Buying" else "red"
-            st.markdown(f"**<span style='color:{color}'>{row['status']}</span> {row['item_name']}** &mdash; {row['quantity']}x @ {row['price']:,.0f} GP", unsafe_allow_html=True)
+            target_p = target_prices.get(row['item_id'], 0)
+            status_color = "green" if row["status"] == "Buying" else "red"
+            warning_icon = ""
+            
+            if row["status"] == "Buying" and row["price"] < target_p:
+                status_color = "orange"
+                warning_icon = "⚠️ *(Outbid)*"
+            elif row["status"] == "Selling" and row["price"] > target_p:
+                status_color = "orange"
+                warning_icon = "⚠️ *(Undercut)*"
+                
+            st.markdown(f"**<span style='color:{status_color}'>{row['status']}</span> {row['item_name']} {warning_icon}** &mdash; {row['quantity']}x @ {row['price']:,.0f} GP", unsafe_allow_html=True)
             colA, colB, colC = st.columns(3)
             with colA:
                 with st.popover("✅ Fill", use_container_width=True):
@@ -266,6 +280,15 @@ if not active_df.empty:
                 with st.popover("✏️ Edit", use_container_width=True):
                     new_qty = st.number_input("Qty", value=int(row["quantity"]), min_value=1, step=1, key=f"qty_{idx}")
                     new_price = st.number_input("Price (GP)", value=int(row["price"]), min_value=0, step=1000, key=f"prc_{idx}")
+                    
+                    target_p = target_prices.get(row['item_id'], 0)
+                    if target_p > 0:
+                        if st.button(f"Reset to {target_p:,}", key=f"reset_{idx}", use_container_width=True):
+                            df_all.at[idx, "price"] = int(target_p)
+                            conn.update(worksheet="Sheet1", data=df_all)
+                            st.cache_data.clear()
+                            st.rerun()
+
                     if st.button("Update", key=f"upd_{idx}", use_container_width=True):
                         df_all.at[idx, "quantity"] = int(new_qty)
                         df_all.at[idx, "price"] = int(new_price)
@@ -304,21 +327,26 @@ if not df.empty:
         else:
             current_inventory[cid] = baseline
         
-    missing = [cid for cid in COMPONENTS if current_inventory[cid] < 1]
+    comp_counts = [current_inventory.get(cid, 0) for cid in COMPONENTS]
+    assembled_sets = min(comp_counts) if comp_counts else 0
+    total_sets = current_inventory.get(SET_ID, 0) + assembled_sets
+    loose_inventory = {cid: current_inventory.get(cid, 0) - assembled_sets for cid in COMPONENTS}
     
-    if 0 < len(missing) < 4:
-        st.write("You own some pieces, but are missing:")
-        for m_id in missing:
-            c_name = ITEMS[m_id]
-            live_low = next((c['raw_low'] for c in components_data if c['id'] == m_id), 0)
-            st.write(f"- 🔴 **{c_name}** (Current Low: {live_low:,.0f} GP)")
-    elif len(missing) == 0:
-        if any(current_inventory[cid] >= 1 for cid in COMPONENTS):
-            st.success("✅ Set is fully assembled and ready to sell!")
-        else:
-             st.info("No pieces owned currently.")
-    else:
+    if total_sets == 0 and not any(qty > 0 for qty in loose_inventory.values()):
         st.info("No pieces owned currently.")
+    else:
+        st.markdown(f"**Current Inventory:** {total_sets} full set(s)")
+        loose_items_list = [f"{qty}x {ITEMS[cid]}" for cid, qty in loose_inventory.items() if qty > 0]
+        if loose_items_list:
+            st.markdown(f"**Loose pieces:** {', '.join(loose_items_list)}")
+        
+        missing = [cid for cid in COMPONENTS if loose_inventory.get(cid, 0) < 1]
+        if 0 < len(missing) < 4:
+            st.write("You need these pieces to form another set:")
+            for m_id in missing:
+                c_name = ITEMS[m_id]
+                live_low = next((c['raw_low'] for c in components_data if c['id'] == m_id), 0)
+                st.write(f"- 🔴 **{c_name}** (Current Low: {live_low:,.0f} GP)")
 else:
     st.info("No pieces owned currently.")
 
