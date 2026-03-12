@@ -31,7 +31,7 @@ if "user_email" not in df_all.columns:
     exit(0)
 
 # Ensure required columns exist (handles older sheets missing new columns)
-for col in ["last_alert_price", "last_known_high", "cooldown"]:
+for col in ["last_alert_price", "last_known_high", "cooldown", "filled_notified"]:
     if col not in df_all.columns:
         df_all[col] = ""
 
@@ -44,7 +44,10 @@ df_all["quantity"] = pd.to_numeric(df_all["quantity"], errors='coerce').fillna(0
 df = df_all[df_all["user_email"] == owner_email]
 active_df = df[df["status"].isin(["Buying", "Selling"])]
 
-if active_df.empty:
+# Also process recently filled orders (status changed to Owned) for fill notifications
+filled_df = df[df["status"] == "Owned"]
+
+if active_df.empty and filled_df.empty:
     print("No active orders found. Exiting.")
     exit(0)
 
@@ -185,7 +188,23 @@ for idx, row in active_df.iterrows():
         df_all.at[idx, "last_alert_price"] = market_price
         df_updated = True
 
-# Send Discord Webhook
+# --- Check for filled orders that haven't been notified yet ---
+for f_idx, f_row in filled_df.iterrows():
+    filled_flag_raw = f_row.get("filled_notified")
+    is_notified = str(filled_flag_raw).strip().lower() == "true" if not pd.isna(filled_flag_raw) else False
+    if not is_notified:
+        item_name = f_row["item_name"]
+        qty = int(f_row["quantity"])
+        price = int(f_row["price"])
+        alerts_to_send.append(
+            f"✅ **[FILLED] {item_name}** ({qty}x)\n"
+            f"> Final price: `{price:,} GP`\n"
+            f"> *Your order has been filled and recorded.*"
+        )
+        df_all.at[f_idx, "filled_notified"] = "true"
+        df_updated = True
+
+# Send Discord Webhook (one combined message for everything)
 if alerts_to_send:
     print(f"Sending {len(alerts_to_send)} alerts to Discord...")
     payload = {
