@@ -91,8 +91,8 @@ for idx, row in active_df.iterrows():
             elif current_low <= order_price:
                 market_price = current_low
                 if market_price != last_alert:
-                    # Suppress false positives on brand new orders where the old trade was lower
-                    if last_alert == 0 and current_low < order_price:
+                    # Suppress false positives on brand new orders where the old trade was lower or equal
+                    if last_alert == 0 and current_low <= order_price:
                         df_all.at[idx, "last_alert_price"] = market_price
                         df_updated = True
                     else:
@@ -116,8 +116,8 @@ for idx, row in active_df.iterrows():
             elif current_high >= order_price:
                 market_price = current_high
                 if market_price != last_alert:
-                    # Suppress false positives on brand new orders where the old trade was higher
-                    if last_alert == 0 and current_high > order_price:
+                    # Suppress false positives on brand new orders where the old trade was higher or equal
+                    if last_alert == 0 and current_high >= order_price:
                         df_all.at[idx, "last_alert_price"] = market_price
                         df_updated = True
                     else:

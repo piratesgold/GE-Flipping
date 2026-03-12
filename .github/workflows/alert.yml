@@ -1,9 +1,9 @@
-name: 30-Minute Price Alerts
+name: 2-Minute Price Alerts
 
 on:
   schedule:
-    # Runs every 30 minutes
-    - cron: '*/30 * * * *'
+    # Runs every 2 minutes
+    - cron: '*/2 * * * *'
   workflow_dispatch:
     # Allows for manual triggering from the GitHub UI for testing
 

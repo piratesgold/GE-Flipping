@@ -121,7 +121,20 @@ data_is_stale = is_stale()
 for cid in COMPONENTS:
     d = get_item_data(cid)
     raw_low = d.get("low", 0)
-    target_buy = raw_low + 1172 if raw_low > 0 else 0
+    
+    # Avoid bidding against ourselves if we already hold the lowest price or higher
+    my_active_bids = df[(df["item_id"] == cid) & (df["status"] == "Buying")]
+    highest_my_bid = my_active_bids["price"].max() if not my_active_bids.empty else 0
+    
+    if raw_low > 0:
+        if highest_my_bid >= raw_low:
+            # We are the current winner (or tied), no need to add 1172
+            target_buy = highest_my_bid
+        else:
+            # Someone else is lower, or we don't have a bid, so we increment
+            target_buy = raw_low + 1172
+    else:
+        target_buy = 0
     
     components_data.append({
         "id": cid,
