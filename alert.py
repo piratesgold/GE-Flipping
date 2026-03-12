@@ -8,14 +8,11 @@ from streamlit_gsheets import GSheetsConnection
 # Load secrets directly bypassing streamlit app context since this runs headless
 try:
     with open(".streamlit/secrets.toml", "r") as f:
-        # Extremely basic TOML parsing to extract secrets for the headless script
         secrets_text = f.read()
 except FileNotFoundError:
     print("No local secrets found. Assuming GitHub Secrets environment.")
     secrets_text = ""
 
-# Since this script runs on GitHub Actions, it will use st.secrets which GitHub Actions
-# can inject via a .streamlit/secrets.toml file we generate in the workflow.
 owner_email = st.secrets.get("OWNER_EMAIL", "")
 webhook_url = st.secrets.get("DISCORD_WEBHOOK", "")
 user_agent = st.secrets.get("USER_AGENT", "Gilded Set-Master GitHub Actions")
@@ -32,6 +29,16 @@ df_all = df_all.dropna(how="all")
 if "user_email" not in df_all.columns:
     print("Database is empty or missing columns.")
     exit(0)
+
+# Ensure required columns exist (handles older sheets missing new columns)
+for col in ["last_alert_price", "last_known_high", "cooldown"]:
+    if col not in df_all.columns:
+        df_all[col] = ""
+
+# Sanitize numeric columns
+df_all["item_id"] = pd.to_numeric(df_all["item_id"], errors='coerce').fillna(0).astype(int)
+df_all["price"] = pd.to_numeric(df_all["price"], errors='coerce').fillna(0).astype(int)
+df_all["quantity"] = pd.to_numeric(df_all["quantity"], errors='coerce').fillna(0).astype(int)
 
 # Get current user's active orders
 df = df_all[df_all["user_email"] == owner_email]
@@ -52,6 +59,9 @@ except Exception as e:
     print(f"Failed to fetch prices from OSRS Wiki: {e}")
     exit(1)
 
+SQUEEZE_THRESHOLD_PCT = 0.01   # 1% spike = cooldown trigger
+SPREAD_MIN_GP = 5000           # Spread must reopen by at least 5k GP to exit cooldown
+
 alerts_to_send = []
 df_updated = False
 
@@ -61,25 +71,79 @@ for idx, row in active_df.iterrows():
     order_price = int(row["price"])
     qty = int(row["quantity"])
     status = row["status"]
-    last_alert = row.get("last_alert_price")
-    
-    # Handle NaNs from sheets
-    if pd.isna(last_alert):
-        last_alert = 0
-    else:
-        last_alert = int(last_alert)
-    
+
+    # Parse last_alert_price safely
+    last_alert_raw = row.get("last_alert_price")
+    last_alert = 0
+    if not pd.isna(last_alert_raw) and str(last_alert_raw).strip() != "":
+        try:
+            last_alert = int(float(last_alert_raw))
+        except (ValueError, TypeError):
+            last_alert = 0
+
+    # Parse last_known_high safely
+    last_known_high_raw = row.get("last_known_high")
+    last_known_high = 0
+    if not pd.isna(last_known_high_raw) and str(last_known_high_raw).strip() != "":
+        try:
+            last_known_high = int(float(last_known_high_raw))
+        except (ValueError, TypeError):
+            last_known_high = 0
+
+    # Parse cooldown flag safely
+    cooldown_raw = row.get("cooldown")
+    is_cooldown = str(cooldown_raw).strip().lower() == "true" if not pd.isna(cooldown_raw) else False
+
     live_data = prices_data.get(item_id, {})
     current_low = int(live_data.get("low", 0))
     current_high = int(live_data.get("high", 0))
-    
+
+    # --- Cooldown / Squeeze Detection (Buy orders only) ---
+    if status == "Buying" and current_high > 0 and current_low > 0:
+        spread = current_high - current_low
+
+        if not is_cooldown:
+            # Check ENTER condition: high spiked >1% AND spread collapsed
+            if last_known_high > 0:
+                pct_change = (current_high - last_known_high) / last_known_high
+                if pct_change > SQUEEZE_THRESHOLD_PCT and spread < SPREAD_MIN_GP:
+                    is_cooldown = True
+                    df_all.at[idx, "cooldown"] = "true"
+                    df_updated = True
+                    alerts_to_send.append(
+                        f"🧊 **[COOLDOWN] {item_name}** ({qty}x)\n"
+                        f"> High spiked from `{last_known_high:,}` to `{current_high:,}` GP\n"
+                        f"> Spread collapsed to `{spread:,}` GP\n"
+                        f"> *Holding your bid at `{order_price:,}` GP. Waiting for spread to reopen.*"
+                    )
+        else:
+            # Check EXIT condition: spread reopened
+            if spread >= SPREAD_MIN_GP:
+                is_cooldown = False
+                df_all.at[idx, "cooldown"] = ""
+                df_updated = True
+                alerts_to_send.append(
+                    f"✅ **[COOLDOWN OVER] {item_name}** ({qty}x)\n"
+                    f"> Spread reopened to `{spread:,}` GP\n"
+                    f"> *Resume normal bidding. Check your orders!*"
+                )
+
+        # Always update last_known_high
+        if current_high != last_known_high:
+            df_all.at[idx, "last_known_high"] = current_high
+            df_updated = True
+
+    # --- Price Alert Logic (skip if in cooldown) ---
+    if is_cooldown:
+        continue
+
     msg = None
     market_price = 0
-    
+
     if status == "Buying":
         if current_low > 0:
-            # If the current low in the market is higher than our bid, we are buried!
             if current_low > order_price:
+                # Outbid
                 market_price = current_low
                 if market_price != last_alert:
                     diff = current_low - order_price
@@ -87,12 +151,12 @@ for idx, row in active_df.iterrows():
                            f"> Your Bid: `{order_price:,} GP`\n"
                            f"> Current Low: `{current_low:,} GP`\n"
                            f"> *You are outbid by {diff:,} GP!*")
-            # If the current low hits our bid or goes under, a trade happened at or below our price
             elif current_low <= order_price:
+                # Likely filled
                 market_price = current_low
                 if market_price != last_alert:
-                    # Suppress false positives on brand new orders where the old trade was lower or equal
-                    if last_alert == 0 and current_low <= order_price:
+                    if last_alert == 0:
+                        # First run for this order, seed the state silently
                         df_all.at[idx, "last_alert_price"] = market_price
                         df_updated = True
                     else:
@@ -103,8 +167,8 @@ for idx, row in active_df.iterrows():
 
     elif status == "Selling":
         if current_high > 0:
-            # If the current high in the market is lower than our ask, we are undercut!
             if current_high < order_price:
+                # Undercut
                 market_price = current_high
                 if market_price != last_alert:
                     diff = order_price - current_high
@@ -112,12 +176,11 @@ for idx, row in active_df.iterrows():
                            f"> Your Ask: `{order_price:,} GP`\n"
                            f"> Current High: `{current_high:,} GP`\n"
                            f"> *You are undercut by {diff:,} GP!*")
-            # If the current high hits our ask or goes over, a trade happened at or above our price
             elif current_high >= order_price:
+                # Likely sold
                 market_price = current_high
                 if market_price != last_alert:
-                    # Suppress false positives on brand new orders where the old trade was higher or equal
-                    if last_alert == 0 and current_high >= order_price:
+                    if last_alert == 0:
                         df_all.at[idx, "last_alert_price"] = market_price
                         df_updated = True
                     else:

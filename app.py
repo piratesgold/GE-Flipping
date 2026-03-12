@@ -258,7 +258,14 @@ if not active_df.empty:
             status_color = "green" if row["status"] == "Buying" else "red"
             warning_icon = ""
             
-            if row["status"] == "Buying" and row["price"] < target_p:
+            # Check cooldown state from the sheet
+            cooldown_val = row.get("cooldown") if "cooldown" in row.index else ""
+            is_cooldown = str(cooldown_val).strip().lower() == "true" if not pd.isna(cooldown_val) else False
+            
+            if is_cooldown:
+                status_color = "#3498db"
+                warning_icon = "🧊 *(Cooldown — Price Squeezed)*"
+            elif row["status"] == "Buying" and row["price"] < target_p:
                 status_color = "orange"
                 warning_icon = "⚠️ *(Outbid)*"
             elif row["status"] == "Selling" and row["price"] > target_p:
