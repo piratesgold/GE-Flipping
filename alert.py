@@ -110,23 +110,14 @@ for idx, row in active_df.iterrows():
                     is_cooldown = True
                     df_all.at[idx, "cooldown"] = "true"
                     df_updated = True
-                    alerts_to_send.append(
-                        f"🧊 **[COOLDOWN] {item_name}** ({qty}x)\n"
-                        f"> High spiked from `{last_known_high:,}` to `{current_high:,}` GP\n"
-                        f"> Spread collapsed to `{spread:,}` GP\n"
-                        f"> *Holding your bid at `{order_price:,}` GP. Waiting for spread to reopen.*"
-                    )
+                    # Silently enter cooldown state to suppress outbid alerts
         else:
             # Check EXIT condition: spread reopened
             if spread >= SPREAD_MIN_GP:
                 is_cooldown = False
                 df_all.at[idx, "cooldown"] = ""
                 df_updated = True
-                alerts_to_send.append(
-                    f"✅ **[COOLDOWN OVER] {item_name}** ({qty}x)\n"
-                    f"> Spread reopened to `{spread:,}` GP\n"
-                    f"> *Resume normal bidding. Check your orders!*"
-                )
+                # Silently exit cooldown state
 
         # Always update last_known_high
         if current_high != last_known_high:
