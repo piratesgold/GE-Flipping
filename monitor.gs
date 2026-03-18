@@ -14,23 +14,6 @@ var API_URL = "https://prices.runescape.wiki/api/v1/osrs/latest";
 var SQUEEZE_THRESHOLD_PCT = 0.01;  // 1% spike
 var SPREAD_MIN_GP = 5000;          // 5k GP spread to exit cooldown
 
-// --- COLUMN MAPPING ---
-// These must match your Google Sheet column order (1-indexed)
-// Adjust if your sheet columns are in a different order
-var COL = {
-  USER_EMAIL: 1,
-  ITEM_ID: 2,
-  ITEM_NAME: 3,
-  PRICE: 4,
-  QUANTITY: 5,
-  STATUS: 6,
-  TIMESTAMP: 7,
-  LAST_ALERT_PRICE: 8,
-  LAST_KNOWN_HIGH: 9,
-  COOLDOWN: 10,
-  FILLED_NOTIFIED: 11
-};
-
 function monitorOSRS() {
   var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Sheet1");
   if (!sheet) {
@@ -56,29 +39,24 @@ function monitorOSRS() {
     else if (header === "last_known_high") colMap.lastKnownHigh = h;
     else if (header === "cooldown") colMap.cooldown = h;
     else if (header === "filled_notified") colMap.filledNotified = h;
+    else if (header === "last_alert_type") colMap.lastAlertType = h;
   }
   
   // Ensure state columns exist — add headers if missing
   var lastCol = headers.length;
-  if (colMap.lastAlertPrice === undefined) {
-    sheet.getRange(1, lastCol + 1).setValue("last_alert_price");
-    colMap.lastAlertPrice = lastCol;
-    lastCol++;
-  }
-  if (colMap.lastKnownHigh === undefined) {
-    sheet.getRange(1, lastCol + 1).setValue("last_known_high");
-    colMap.lastKnownHigh = lastCol;
-    lastCol++;
-  }
-  if (colMap.cooldown === undefined) {
-    sheet.getRange(1, lastCol + 1).setValue("cooldown");
-    colMap.cooldown = lastCol;
-    lastCol++;
-  }
-  if (colMap.filledNotified === undefined) {
-    sheet.getRange(1, lastCol + 1).setValue("filled_notified");
-    colMap.filledNotified = lastCol;
-    lastCol++;
+  var requiredCols = [
+    {key: "lastAlertPrice", name: "last_alert_price"},
+    {key: "lastKnownHigh", name: "last_known_high"},
+    {key: "cooldown", name: "cooldown"},
+    {key: "filledNotified", name: "filled_notified"},
+    {key: "lastAlertType", name: "last_alert_type"}
+  ];
+  for (var c = 0; c < requiredCols.length; c++) {
+    if (colMap[requiredCols[c].key] === undefined) {
+      sheet.getRange(1, lastCol + 1).setValue(requiredCols[c].name);
+      colMap[requiredCols[c].key] = lastCol;
+      lastCol++;
+    }
   }
 
   // Re-read data in case we just added columns
@@ -99,7 +77,6 @@ function monitorOSRS() {
   }
   
   var alerts = [];
-  var sheetUpdated = false;
   
   // Process each row (skip header row at index 0)
   for (var i = 1; i < data.length; i++) {
@@ -127,17 +104,17 @@ function monitorOSRS() {
           "> *Your order has been filled and recorded.*"
         );
         sheet.getRange(i + 1, colMap.filledNotified + 1).setValue("true");
-        sheetUpdated = true;
       }
       continue;
     }
     
-    // Only process active orders
+    // Only process active orders (Buying / Selling)
     if (status !== "Buying" && status !== "Selling") continue;
     
     var lastAlert = parseNum(row[colMap.lastAlertPrice]);
     var lastKnownHigh = parseNum(row[colMap.lastKnownHigh]);
     var isCooldown = String(row[colMap.cooldown] || "").trim().toLowerCase() === "true";
+    var lastAlertType = String(row[colMap.lastAlertType] || "").trim().toLowerCase();
     
     var liveItem = pricesData[itemId] || {};
     var currentLow = Math.floor(Number(liveItem.low) || 0);
@@ -153,22 +130,18 @@ function monitorOSRS() {
           if (pctChange > SQUEEZE_THRESHOLD_PCT && spread < SPREAD_MIN_GP) {
             isCooldown = true;
             sheet.getRange(i + 1, colMap.cooldown + 1).setValue("true");
-            sheetUpdated = true;
           }
         }
       } else {
-        // Check exit condition
         if (spread >= SPREAD_MIN_GP) {
           isCooldown = false;
           sheet.getRange(i + 1, colMap.cooldown + 1).setValue("");
-          sheetUpdated = true;
         }
       }
       
       // Always track last_known_high
       if (currentHigh !== lastKnownHigh) {
         sheet.getRange(i + 1, colMap.lastKnownHigh + 1).setValue(currentHigh);
-        sheetUpdated = true;
       }
     }
     
@@ -177,70 +150,99 @@ function monitorOSRS() {
     
     var msg = null;
     var marketPrice = 0;
+    var alertType = "";
     
+    // =========================================================================
+    // BUYING LOGIC
+    // =========================================================================
     if (status === "Buying") {
       if (currentLow > 0) {
-        if (currentLow > orderPrice) {
-          // Outbid
-          marketPrice = currentLow;
-          if (marketPrice !== lastAlert) {
-            var diff = currentLow - orderPrice;
-            msg = "⚠️ **[OUTBID] " + itemName + "** (" + qty + "x)\n" +
-                  "> Your Bid: `" + formatGP(orderPrice) + " GP`\n" +
-                  "> Current Low: `" + formatGP(currentLow) + " GP`\n" +
-                  "> *You are outbid by " + formatGP(diff) + " GP!*";
-          }
-        } else if (currentLow <= orderPrice) {
-          // Likely filled
+        if (currentLow <= orderPrice) {
+          // Price is at or below our bid → LIKELY FILLED
           marketPrice = currentLow;
           if (marketPrice !== lastAlert) {
             if (lastAlert === 0) {
-              // First run — seed silently
+              // First run for this order — seed silently, no alert
               sheet.getRange(i + 1, colMap.lastAlertPrice + 1).setValue(marketPrice);
-              sheetUpdated = true;
+              sheet.getRange(i + 1, colMap.lastAlertType + 1).setValue("seeded");
             } else {
               msg = "✅ **[LIKELY FILLED] " + itemName + "** (" + qty + "x)\n" +
                     "> Your Bid: `" + formatGP(orderPrice) + " GP`\n" +
                     "> Current Low: `" + formatGP(currentLow) + " GP`\n" +
                     "> *Your order is likely filled!*";
+              alertType = "filled";
             }
           }
-        }
-      }
-    } else if (status === "Selling") {
-      if (currentHigh > 0) {
-        if (currentHigh < orderPrice) {
-          // Undercut
-          marketPrice = currentHigh;
-          if (marketPrice !== lastAlert) {
-            var diff = orderPrice - currentHigh;
-            msg = "⚠️ **[UNDERCUT] " + itemName + "** (" + qty + "x)\n" +
-                  "> Your Ask: `" + formatGP(orderPrice) + " GP`\n" +
-                  "> Current High: `" + formatGP(currentHigh) + " GP`\n" +
-                  "> *You are undercut by " + formatGP(diff) + " GP!*";
-          }
-        } else if (currentHigh >= orderPrice) {
-          // Likely sold
-          marketPrice = currentHigh;
-          if (marketPrice !== lastAlert) {
-            if (lastAlert === 0) {
-              sheet.getRange(i + 1, colMap.lastAlertPrice + 1).setValue(marketPrice);
-              sheetUpdated = true;
-            } else {
-              msg = "✅ **[LIKELY SOLD] " + itemName + "** (" + qty + "x)\n" +
-                    "> Your Ask: `" + formatGP(orderPrice) + " GP`\n" +
-                    "> Current High: `" + formatGP(currentHigh) + " GP`\n" +
-                    "> *Your set is likely sold!*";
+        } else if (currentLow > orderPrice) {
+          // Price is above our bid
+          // BUT: if the LAST alert we sent was "filled", the order probably already
+          // completed. Don't send an OUTBID alert — that would be misleading.
+          if (lastAlertType === "filled") {
+            // Suppress outbid. The order likely filled at our price, and now
+            // the market has moved on. Stay silent.
+            Logger.log("Suppressing OUTBID for " + itemName + " — last alert was LIKELY FILLED.");
+          } else {
+            // Genuine outbid scenario
+            marketPrice = currentLow;
+            if (marketPrice !== lastAlert) {
+              var diff = currentLow - orderPrice;
+              msg = "⚠️ **[OUTBID] " + itemName + "** (" + qty + "x)\n" +
+                    "> Your Bid: `" + formatGP(orderPrice) + " GP`\n" +
+                    "> Current Low: `" + formatGP(currentLow) + " GP`\n" +
+                    "> *You are outbid by " + formatGP(diff) + " GP!*";
+              alertType = "outbid";
             }
           }
         }
       }
     }
     
+    // =========================================================================
+    // SELLING LOGIC
+    // =========================================================================
+    else if (status === "Selling") {
+      if (currentHigh > 0) {
+        if (currentHigh >= orderPrice) {
+          // Price is at or above our ask → LIKELY SOLD
+          marketPrice = currentHigh;
+          if (marketPrice !== lastAlert) {
+            if (lastAlert === 0) {
+              sheet.getRange(i + 1, colMap.lastAlertPrice + 1).setValue(marketPrice);
+              sheet.getRange(i + 1, colMap.lastAlertType + 1).setValue("seeded");
+            } else {
+              msg = "✅ **[LIKELY SOLD] " + itemName + "** (" + qty + "x)\n" +
+                    "> Your Ask: `" + formatGP(orderPrice) + " GP`\n" +
+                    "> Current High: `" + formatGP(currentHigh) + " GP`\n" +
+                    "> *Your set is likely sold!*";
+              alertType = "sold";
+            }
+          }
+        } else if (currentHigh < orderPrice) {
+          // Price is below our ask
+          // BUT: if the LAST alert was "sold", the set probably already sold.
+          // Don't send an UNDERCUT alert.
+          if (lastAlertType === "sold") {
+            Logger.log("Suppressing UNDERCUT for " + itemName + " — last alert was LIKELY SOLD.");
+          } else {
+            marketPrice = currentHigh;
+            if (marketPrice !== lastAlert) {
+              var diff = orderPrice - currentHigh;
+              msg = "⚠️ **[UNDERCUT] " + itemName + "** (" + qty + "x)\n" +
+                    "> Your Ask: `" + formatGP(orderPrice) + " GP`\n" +
+                    "> Current High: `" + formatGP(currentHigh) + " GP`\n" +
+                    "> *You are undercut by " + formatGP(diff) + " GP!*";
+              alertType = "undercut";
+            }
+          }
+        }
+      }
+    }
+    
+    // Write alert state back to the sheet
     if (msg) {
       alerts.push(msg);
       sheet.getRange(i + 1, colMap.lastAlertPrice + 1).setValue(marketPrice);
-      sheetUpdated = true;
+      sheet.getRange(i + 1, colMap.lastAlertType + 1).setValue(alertType);
     }
   }
   
