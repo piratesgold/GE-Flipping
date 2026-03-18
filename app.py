@@ -3,9 +3,13 @@ import requests
 import time
 import pandas as pd
 from streamlit_gsheets import GSheetsConnection
+from streamlit_autorefresh import st_autorefresh
 
 # Mobile optimization: centered layout, collapsed sidebar
-st.set_page_config(page_title="Gilded Set-Master", layout="centered", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="GE Flips", layout="centered", initial_sidebar_state="collapsed")
+
+# Auto-refresh every 2 minutes (120000 ms) for background alert checks
+st_autorefresh(interval=120000, key="auto_refresh")
 
 # Custom CSS for large touch targets
 st.markdown("""
@@ -18,6 +22,10 @@ st.markdown("""
     }
     div[data-testid="stMetricValue"] {
         font-size: 26px;
+    }
+    a.wiki-link {
+        text-decoration: none;
+        font-size: 14px;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -54,6 +62,11 @@ except Exception as e:
     # Fallback to empty DataFrame if sheet doesn't exist or is completely empty
     df_all = pd.DataFrame(columns=["user_email", "item_id", "item_name", "price", "quantity", "status", "timestamp", "last_alert_price"])
 
+# Ensure required columns exist
+for col in ["last_alert_price", "last_known_high", "cooldown", "filled_notified"]:
+    if col not in df_all.columns:
+        df_all[col] = ""
+
 # Sanitize formatting from fresh gsheets reads
 df_all["item_id"] = pd.to_numeric(df_all["item_id"], errors='coerce').fillna(0).astype(int)
 df_all["price"] = pd.to_numeric(df_all["price"], errors='coerce').fillna(0).astype(int)
@@ -72,9 +85,11 @@ ITEMS = {
 COMPONENTS = [3481, 3483, 3486, 3488]
 SET_ID = 13036
 
+WIKI_LINK = "https://prices.runescape.wiki/osrs/item/"
+
 # --- Top Refresh Button ---
 if st.button("🔄 Refresh Data", use_container_width=True):
-    pass # Inherent rerun on click
+    st.cache_data.clear()
 
 # --- Data Fetching ---
 @st.cache_data(ttl=15)
@@ -82,7 +97,7 @@ def fetch_prices():
     try:
         user_agent = st.secrets["USER_AGENT"]
     except Exception:
-        user_agent = "Gilded Set-Master Local" 
+        user_agent = "GE Flips Local" 
         
     headers = {"User-Agent": user_agent}
     url = "https://prices.runescape.wiki/api/v1/osrs/latest"
@@ -96,6 +111,23 @@ def fetch_prices():
     except Exception as e:
         st.error(f"Failed to fetch prices: {e}")
         return {"fetched_at": 0, "items": {}}
+
+@st.cache_data(ttl=300)
+def fetch_timeseries(item_id):
+    """Fetch 1-hour timeseries data (up to 365 points = ~15 days) for buy priority."""
+    try:
+        user_agent = st.secrets["USER_AGENT"]
+    except Exception:
+        user_agent = "GE Flips Local"
+    
+    headers = {"User-Agent": user_agent}
+    url = f"https://prices.runescape.wiki/api/v1/osrs/timeseries?timestep=1h&id={item_id}"
+    try:
+        response = requests.get(url, headers=headers)
+        response.raise_for_status()
+        return response.json().get("data", [])
+    except Exception:
+        return []
 
 api_data = fetch_prices()
 prices_data = api_data.get("items", {})
@@ -187,14 +219,75 @@ st.markdown(f"<p style='text-align: center'><b>Break-even Set Ask:</b> {break_ev
 if set_stale:
     st.error("⚠️ Set Sell Price is STALE (> 120s old)")
 
+# Wiki link for the set
+st.markdown(f"📈 [View Set Price Chart]({WIKI_LINK}{SET_ID})", unsafe_allow_html=True)
+
+st.divider()
+
+# --- Buy Priority Ranking ---
+st.subheader("🏆 Buy Priority")
+
+priority_data = []
+for c in components_data:
+    ts = fetch_timeseries(c['id'])
+    if ts and len(ts) >= 2:
+        # Get avg low price from last 24 data points (24 hours at 1h interval)
+        recent = ts[-24:] if len(ts) >= 24 else ts
+        low_prices = [p.get("avgLowPrice") for p in recent if p.get("avgLowPrice") is not None]
+        if low_prices:
+            avg_24h = sum(low_prices) / len(low_prices)
+            current_low = c['raw_low']
+            if avg_24h > 0 and current_low > 0:
+                deviation_pct = ((current_low - avg_24h) / avg_24h) * 100
+                priority_data.append({
+                    "name": c['name'],
+                    "id": c['id'],
+                    "current_low": current_low,
+                    "avg_24h": avg_24h,
+                    "deviation": deviation_pct,
+                    "target_buy": c['target_buy']
+                })
+
+if priority_data:
+    # Sort by deviation ascending (most negative = biggest dip = buy first)
+    priority_data.sort(key=lambda x: x['deviation'])
+    
+    for rank, p in enumerate(priority_data, 1):
+        dev = p['deviation']
+        if dev <= -2:
+            icon = "🟢"
+            color = "green"
+        elif dev <= -0.5:
+            icon = "🟡" 
+            color = "#DAA520"
+        elif dev <= 0.5:
+            icon = "⚪"
+            color = "gray"
+        else:
+            icon = "🔴"
+            color = "red"
+        
+        st.markdown(
+            f"**{rank}. {icon} {p['name']}** — "
+            f"Low: `{p['current_low']:,.0f}` · "
+            f"24h Avg: `{p['avg_24h']:,.0f}` · "
+            f"<span style='color:{color}'>{dev:+.1f}%</span> "
+            f"[📈]({WIKI_LINK}{p['id']})",
+            unsafe_allow_html=True
+        )
+else:
+    st.info("Waiting for timeseries data...")
+
 st.divider()
 
 st.subheader("Component Target Bids")
 for c in components_data:
     stale_text = " ⚠️ **STALE**" if c["stale"] else ""
-    col_item, col_btn = st.columns([2, 1])
+    col_item, col_link, col_btn = st.columns([3, 1, 2])
     with col_item:
         st.markdown(f"**{c['name']}**<br/>{c['target_buy']:,.0f} GP{stale_text}", unsafe_allow_html=True)
+    with col_link:
+        st.markdown(f"[📈]({WIKI_LINK}{c['id']})")
     with col_btn:
         with st.popover("Order", use_container_width=True):
             st.write(f"Buy {c['name']}")
@@ -378,40 +471,29 @@ st.divider()
 st.subheader("History & Profit Metrics")
 if not df.empty:
     # --- Realized Profit Calculation ---
-    # To find strict realized profit, we pair each sold set/component with its purchase cost. 
-    # For simplicity, we calculate total revenue from "Sold" and subtract the exact cost basis of those sold items.
-    # Total Revenue (post 2% tax)
     total_revenue = (df[df["status"] == "Sold"]["price"] * df[df["status"] == "Sold"]["quantity"] * 0.98).sum()
     
-    # Calculate average cost basis of all items purchased to subtract from total_revenue
-    # (A more complex FIFO method could be used, but average cost is simpler for a mobile view).
     buy_df = df[df["status"].isin(["Owned", "Buying"])]
     avg_costs = {}
     for item_id, group in buy_df.groupby("item_id"):
         avg_costs[item_id] = (group["price"] * group["quantity"]).sum() / group["quantity"].sum()
         
-    total_cogs = 0 # Cost of Goods Sold
+    total_cogs = 0
     for index, row in df[df["status"] == "Sold"].iterrows():
         sid = row["item_id"]
         sqty = row["quantity"]
         if sid == SET_ID:
-            # Reconstruct cost basis of the set from its components
             set_cogs = sum([avg_costs.get(cid, 0) for cid in COMPONENTS]) * sqty
             total_cogs += set_cogs
         else:
-            # Standalone component sale
             total_cogs += avg_costs.get(sid, 0) * sqty
             
     realized_profit = total_revenue - total_cogs
     
-    # --- Unrealized Value Calculation ---
-    # The user wants "Unrealized" to mean the total Capital Deployed (Cost Basis) for the current inventory.
     inventory_cost = 0
-    
     for cid in COMPONENTS + [SET_ID]:
         inv_qty = current_inventory.get(cid, 0)
         if inv_qty > 0:
-            # What we paid (Capital Tied Up)
             cost_basis = avg_costs.get(cid, 0) * inv_qty
             inventory_cost += cost_basis
 
@@ -420,7 +502,6 @@ if not df.empty:
         r_color = "green" if realized_profit >= 0 else "red"
         st.markdown(f"**Realized Profit:**<br><span style='color:{r_color}; font-size:20px'>{realized_profit:,.0f} GP</span>", unsafe_allow_html=True)
     with colB:
-        # Since it is just cost, we can make it blue or standard text instead of red/green.
         st.markdown(f"**Inventory (At Cost):**<br><span style='color:inherit; font-size:20px'>{inventory_cost:,.0f} GP</span>", unsafe_allow_html=True)
     
     st.write("") # spacing
@@ -429,3 +510,169 @@ if not df.empty:
             st.write(f"`{row['timestamp'][:16]}` | **{row['item_name']}** | {row['quantity']}x @ {row['price']:,.0f} GP [{row['status']}]")
 else:
     st.write("No transaction history available.")
+
+# =============================================================================
+# --- In-App Alert System (runs every auto-refresh cycle) ---
+# =============================================================================
+def run_inline_alerts():
+    """Check active orders against live prices and send Discord alerts."""
+    webhook_url = st.secrets.get("DISCORD_WEBHOOK", "")
+    if not webhook_url:
+        return
+    
+    user_df = df_all[df_all["user_email"] == current_user]
+    active_orders = user_df[user_df["status"].isin(["Buying", "Selling"])]
+    owned_orders = user_df[user_df["status"] == "Owned"]
+    
+    if active_orders.empty and owned_orders.empty:
+        return
+    
+    SQUEEZE_THRESHOLD_PCT = 0.01
+    SPREAD_MIN_GP = 5000
+    
+    alerts = []
+    sheet_updated = False
+    
+    for idx, row in active_orders.iterrows():
+        item_id = str(row["item_id"])
+        item_name = row["item_name"]
+        order_price = int(row["price"])
+        qty = int(row["quantity"])
+        status = row["status"]
+        
+        # Parse last_alert_price
+        last_alert_raw = row.get("last_alert_price")
+        last_alert = 0
+        if not pd.isna(last_alert_raw) and str(last_alert_raw).strip() != "":
+            try:
+                last_alert = int(float(last_alert_raw))
+            except (ValueError, TypeError):
+                last_alert = 0
+        
+        # Parse last_known_high
+        last_known_high_raw = row.get("last_known_high")
+        last_known_high = 0
+        if not pd.isna(last_known_high_raw) and str(last_known_high_raw).strip() != "":
+            try:
+                last_known_high = int(float(last_known_high_raw))
+            except (ValueError, TypeError):
+                last_known_high = 0
+        
+        # Parse cooldown
+        cooldown_raw = row.get("cooldown")
+        is_cooldown = str(cooldown_raw).strip().lower() == "true" if not pd.isna(cooldown_raw) else False
+        
+        live_data = prices_data.get(item_id, {})
+        current_low = int(live_data.get("low", 0))
+        current_high = int(live_data.get("high", 0))
+        
+        # --- Cooldown / Squeeze Detection (Buy orders only) ---
+        if status == "Buying" and current_high > 0 and current_low > 0:
+            spread = current_high - current_low
+            
+            if not is_cooldown:
+                if last_known_high > 0:
+                    pct_change = (current_high - last_known_high) / last_known_high
+                    if pct_change > SQUEEZE_THRESHOLD_PCT and spread < SPREAD_MIN_GP:
+                        is_cooldown = True
+                        df_all.at[idx, "cooldown"] = "true"
+                        sheet_updated = True
+            else:
+                if spread >= SPREAD_MIN_GP:
+                    is_cooldown = False
+                    df_all.at[idx, "cooldown"] = ""
+                    sheet_updated = True
+            
+            if current_high != last_known_high:
+                df_all.at[idx, "last_known_high"] = current_high
+                sheet_updated = True
+        
+        # Skip alerts if in cooldown
+        if is_cooldown:
+            continue
+        
+        msg = None
+        market_price = 0
+        
+        if status == "Buying":
+            if current_low > 0:
+                if current_low > order_price:
+                    market_price = current_low
+                    if market_price != last_alert:
+                        diff = current_low - order_price
+                        msg = (f"⚠️ **[OUTBID] {item_name}** ({qty}x)\n"
+                               f"> Your Bid: `{order_price:,} GP`\n"
+                               f"> Current Low: `{current_low:,} GP`\n"
+                               f"> *You are outbid by {diff:,} GP!*")
+                elif current_low <= order_price:
+                    market_price = current_low
+                    if market_price != last_alert:
+                        if last_alert == 0:
+                            df_all.at[idx, "last_alert_price"] = market_price
+                            sheet_updated = True
+                        else:
+                            msg = (f"✅ **[LIKELY FILLED] {item_name}** ({qty}x)\n"
+                                   f"> Your Bid: `{order_price:,} GP`\n"
+                                   f"> Current Low: `{current_low:,} GP`\n"
+                                   f"> *Your order is likely filled!*")
+        
+        elif status == "Selling":
+            if current_high > 0:
+                if current_high < order_price:
+                    market_price = current_high
+                    if market_price != last_alert:
+                        diff = order_price - current_high
+                        msg = (f"⚠️ **[UNDERCUT] {item_name}** ({qty}x)\n"
+                               f"> Your Ask: `{order_price:,} GP`\n"
+                               f"> Current High: `{current_high:,} GP`\n"
+                               f"> *You are undercut by {diff:,} GP!*")
+                elif current_high >= order_price:
+                    market_price = current_high
+                    if market_price != last_alert:
+                        if last_alert == 0:
+                            df_all.at[idx, "last_alert_price"] = market_price
+                            sheet_updated = True
+                        else:
+                            msg = (f"✅ **[LIKELY SOLD] {item_name}** ({qty}x)\n"
+                                   f"> Your Ask: `{order_price:,} GP`\n"
+                                   f"> Current High: `{current_high:,} GP`\n"
+                                   f"> *Your set is likely sold!*")
+        
+        if msg:
+            alerts.append(msg)
+            df_all.at[idx, "last_alert_price"] = market_price
+            sheet_updated = True
+    
+    # Check for filled orders not yet notified
+    for f_idx, f_row in owned_orders.iterrows():
+        filled_flag_raw = f_row.get("filled_notified")
+        is_notified = str(filled_flag_raw).strip().lower() == "true" if not pd.isna(filled_flag_raw) else False
+        if not is_notified:
+            item_name = f_row["item_name"]
+            qty = int(f_row["quantity"])
+            price = int(f_row["price"])
+            alerts.append(
+                f"✅ **[FILLED] {item_name}** ({qty}x)\n"
+                f"> Final price: `{price:,} GP`\n"
+                f"> *Your order has been filled and recorded.*"
+            )
+            df_all.at[f_idx, "filled_notified"] = "true"
+            sheet_updated = True
+    
+    # Send combined Discord webhook
+    if alerts:
+        try:
+            payload = {"content": "🔔 **GE Flips Alert**\n" + "\n\n".join(alerts)}
+            requests.post(webhook_url, json=payload, timeout=5)
+        except Exception:
+            pass  # Silently fail — don't break the UI
+    
+    # Persist state changes
+    if sheet_updated:
+        try:
+            conn.update(worksheet="Sheet1", data=df_all)
+        except Exception:
+            pass
+
+# Run the alert check on every refresh cycle
+run_inline_alerts()

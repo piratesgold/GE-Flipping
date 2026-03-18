@@ -1,4 +1,5 @@
 streamlit>=1.40.0
+streamlit-autorefresh
 requests
 pandas
 st-gsheets-connection
