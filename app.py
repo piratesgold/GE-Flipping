@@ -473,6 +473,11 @@ if not df.empty:
     total_revenue = (df[df["status"] == "Sold"]["price"] * df[df["status"] == "Sold"]["quantity"] * 0.98).sum()
     total_cogs = (df[df["status"] == "Owned"]["price"] * df[df["status"] == "Owned"]["quantity"]).sum()
     
+    buy_df = df[df["status"] == "Owned"]
+    avg_costs = {}
+    for item_id, group in buy_df.groupby("item_id"):
+        avg_costs[item_id] = (group["price"] * group["quantity"]).sum() / group["quantity"].sum()
+        
     realized_profit = total_revenue - total_cogs
     
     inventory_cost = 0
