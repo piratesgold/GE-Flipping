@@ -466,14 +466,22 @@ st.subheader("History & Profit Metrics")
 if not df.empty:
     # --- Realized Profit Calculation ---
     total_revenue = (df[df["status"] == "Sold"]["price"] * df[df["status"] == "Sold"]["quantity"] * 0.98).sum()
-    total_cogs = (df[df["status"] == "Owned"]["price"] * df[df["status"] == "Owned"]["quantity"]).sum()
-    
     buy_df = df[df["status"] == "Owned"]
     avg_costs = {}
     for item_id, group in buy_df.groupby("item_id"):
         avg_costs[item_id] = (group["price"] * group["quantity"]).sum() / group["quantity"].sum()
         
-    net_cashflow = total_revenue - total_cogs
+    total_cogs = 0
+    for index, row in df[df["status"] == "Sold"].iterrows():
+        sid = row["item_id"]
+        sqty = row["quantity"]
+        if sid == SET_ID:
+            set_cogs = sum([avg_costs.get(cid, 0) for cid in COMPONENTS]) * sqty
+            total_cogs += set_cogs
+        else:
+            total_cogs += avg_costs.get(sid, 0) * sqty
+            
+    realized_profit = total_revenue - total_cogs
     
     inventory_cost = 0
     for cid in COMPONENTS:
@@ -482,17 +490,12 @@ if not df.empty:
             cost_basis = avg_costs.get(cid, 0) * inv_qty
             inventory_cost += cost_basis
 
-    total_profit = net_cashflow + inventory_cost
-
-    colA, colB, colC = st.columns(3)
+    colA, colB = st.columns(2)
     with colA:
-        r_color = "green" if net_cashflow >= 0 else "red"
-        st.markdown(f"**Net Cashflow:**<br><span style='color:{r_color}; font-size:20px'>{net_cashflow:,.0f} GP</span>", unsafe_allow_html=True)
+        r_color = "green" if realized_profit >= 0 else "red"
+        st.markdown(f"**Realized Profit:**<br><span style='color:{r_color}; font-size:20px'>{realized_profit:,.0f} GP</span>", unsafe_allow_html=True)
     with colB:
         st.markdown(f"**Unsold Inventory:**<br><span style='color:inherit; font-size:20px'>{inventory_cost:,.0f} GP</span>", unsafe_allow_html=True)
-    with colC:
-        p_color = "green" if total_profit >= 0 else "red"
-        st.markdown(f"**Total Profit:**<br><span style='color:{p_color}; font-size:20px'>{total_profit:,.0f} GP</span>", unsafe_allow_html=True)
     
     st.write("") # spacing
     with st.expander("View Ledger Logs", expanded=False):
