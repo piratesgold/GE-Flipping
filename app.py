@@ -181,9 +181,9 @@ raw_high = set_data.get("high", 0)
 target_sell = raw_high - 1 if raw_high > 0 else 0
 set_stale = data_is_stale
 
-# Net Profit = (Target_Sell * 1% Tax) - Pure Market Buys
-net_profit = (target_sell * 0.99) - sum_market_buys
-break_even = sum_market_buys / 0.99 if sum_market_buys > 0 else 0
+# Net Profit = (Target_Sell * 2% Tax) - Pure Market Buys
+net_profit = (target_sell * 0.98) - sum_market_buys
+break_even = sum_market_buys / 0.98 if sum_market_buys > 0 else 0
 
 col1, col2 = st.columns([2, 1])
 with col1:
@@ -470,23 +470,9 @@ st.divider()
 st.subheader("History & Profit Metrics")
 if not df.empty:
     # --- Realized Profit Calculation ---
-    total_revenue = (df[df["status"] == "Sold"]["price"] * df[df["status"] == "Sold"]["quantity"] * 0.99).sum()
+    total_revenue = (df[df["status"] == "Sold"]["price"] * df[df["status"] == "Sold"]["quantity"] * 0.98).sum()
+    total_cogs = (df[df["status"] == "Owned"]["price"] * df[df["status"] == "Owned"]["quantity"]).sum()
     
-    buy_df = df[df["status"] == "Owned"]
-    avg_costs = {}
-    for item_id, group in buy_df.groupby("item_id"):
-        avg_costs[item_id] = (group["price"] * group["quantity"]).sum() / group["quantity"].sum()
-        
-    total_cogs = 0
-    for index, row in df[df["status"] == "Sold"].iterrows():
-        sid = row["item_id"]
-        sqty = row["quantity"]
-        if sid == SET_ID:
-            set_cogs = sum([avg_costs.get(cid, 0) for cid in COMPONENTS]) * sqty
-            total_cogs += set_cogs
-        else:
-            total_cogs += avg_costs.get(sid, 0) * sqty
-            
     realized_profit = total_revenue - total_cogs
     
     inventory_cost = 0
