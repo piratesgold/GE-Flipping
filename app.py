@@ -160,8 +160,11 @@ for cid in COMPONENTS:
     
     if raw_low > 0:
         if highest_my_bid >= raw_low:
-            # We are the current winner (or tied), no need to add 1172
-            target_buy = highest_my_bid
+            # We are the current winner (or tied). Protect against ledger typos.
+            if highest_my_bid > raw_low * 1.05:
+                target_buy = raw_low + 1172
+            else:
+                target_buy = highest_my_bid
         else:
             # Someone else is lower, or we don't have a bid, so we increment
             target_buy = raw_low + 1172
