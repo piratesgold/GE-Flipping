@@ -466,29 +466,41 @@ st.subheader("History & Profit Metrics")
 if not df.empty:
     # --- Realized Profit Calculation ---
     total_revenue = (df[df["status"] == "Sold"]["price"] * df[df["status"] == "Sold"]["quantity"] * 0.98).sum()
-    buy_df = df[df["status"] == "Owned"]
-    avg_costs = {}
-    for item_id, group in buy_df.groupby("item_id"):
-        avg_costs[item_id] = (group["price"] * group["quantity"]).sum() / group["quantity"].sum()
-        
-    total_cogs = 0
-    for index, row in df[df["status"] == "Sold"].iterrows():
-        sid = row["item_id"]
-        sqty = row["quantity"]
-        if sid == SET_ID:
-            set_cogs = sum([avg_costs.get(cid, 0) for cid in COMPONENTS]) * sqty
-            total_cogs += set_cogs
-        else:
-            total_cogs += avg_costs.get(sid, 0) * sqty
-            
-    realized_profit = total_revenue - total_cogs
+    # --- Realized Profit via Exact FIFO ---
+    owned_df = df[df["status"] == "Owned"].copy()
+    owned_df["timestamp"] = pd.to_datetime(owned_df["timestamp"], errors="coerce")
+    owned_df = owned_df.sort_values("timestamp")
     
+    prices_lists = {cid: [] for cid in COMPONENTS}
+    
+    for _, row in owned_df.iterrows():
+        sid = row["item_id"]
+        qty = int(row["quantity"])
+        price = float(row["price"])
+        
+        # Expand explicit set buys into components
+        if sid == SET_ID:
+            comp_price = price / 4.0
+            for cid in COMPONENTS:
+                prices_lists[cid].extend([comp_price] * qty)
+        elif sid in COMPONENTS:
+            prices_lists[sid].extend([price] * qty)
+            
+    total_cogs = 0
     inventory_cost = 0
+    
     for cid in COMPONENTS:
-        inv_qty = current_inventory.get(cid, 0)
-        if inv_qty > 0:
-            cost_basis = avg_costs.get(cid, 0) * inv_qty
-            inventory_cost += cost_basis
+        n_sold = int(sold_counts.get(cid, 0) + sold_counts.get(SET_ID, 0))
+        prices = prices_lists[cid]
+        
+        # FIFO bounds
+        cogs = sum(prices[:n_sold])
+        inv = sum(prices[n_sold:])
+        
+        total_cogs += cogs
+        inventory_cost += inv
+
+    realized_profit = total_revenue - total_cogs
 
     colA, colB = st.columns(2)
     with colA:
