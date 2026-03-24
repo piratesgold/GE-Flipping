@@ -430,21 +430,16 @@ if not df.empty:
     sold_df = df[df["status"] == "Sold"]
     sold_counts = sold_df.groupby("item_id")["quantity"].sum().to_dict()
     
-    # Selling a set implicitly consumes 1 of each component in our ledger logic
-    sold_sets = sold_counts.get(SET_ID, 0)
-    
     current_inventory = {}
-    for cid in COMPONENTS + [SET_ID]:
-        # Owned/Buying minus sold individual components minus sold sets (for components)
-        baseline = incoming_counts.get(cid, 0) - sold_counts.get(cid, 0)
-        if cid in COMPONENTS:
-            current_inventory[cid] = baseline - sold_sets
-        else:
-            current_inventory[cid] = baseline
+    for cid in COMPONENTS:
+        # A set is functionally 1 of each component. Combine explicit component buys + explicit set buys.
+        owned = incoming_counts.get(cid, 0) + incoming_counts.get(SET_ID, 0)
+        sold = sold_counts.get(cid, 0) + sold_counts.get(SET_ID, 0)
+        current_inventory[cid] = owned - sold
         
     comp_counts = [current_inventory.get(cid, 0) for cid in COMPONENTS]
     assembled_sets = min(comp_counts) if comp_counts else 0
-    total_sets = current_inventory.get(SET_ID, 0) + assembled_sets
+    total_sets = assembled_sets
     loose_inventory = {cid: current_inventory.get(cid, 0) - assembled_sets for cid in COMPONENTS}
     
     if total_sets == 0 and not any(qty > 0 for qty in loose_inventory.values()):
@@ -478,21 +473,26 @@ if not df.empty:
     for item_id, group in buy_df.groupby("item_id"):
         avg_costs[item_id] = (group["price"] * group["quantity"]).sum() / group["quantity"].sum()
         
-    realized_profit = total_revenue - total_cogs
+    net_cashflow = total_revenue - total_cogs
     
     inventory_cost = 0
-    for cid in COMPONENTS + [SET_ID]:
+    for cid in COMPONENTS:
         inv_qty = current_inventory.get(cid, 0)
         if inv_qty > 0:
             cost_basis = avg_costs.get(cid, 0) * inv_qty
             inventory_cost += cost_basis
 
-    colA, colB = st.columns(2)
+    total_profit = net_cashflow + inventory_cost
+
+    colA, colB, colC = st.columns(3)
     with colA:
-        r_color = "green" if realized_profit >= 0 else "red"
-        st.markdown(f"**Realized Profit:**<br><span style='color:{r_color}; font-size:20px'>{realized_profit:,.0f} GP</span>", unsafe_allow_html=True)
+        r_color = "green" if net_cashflow >= 0 else "red"
+        st.markdown(f"**Net Cashflow:**<br><span style='color:{r_color}; font-size:20px'>{net_cashflow:,.0f} GP</span>", unsafe_allow_html=True)
     with colB:
-        st.markdown(f"**Inventory (At Cost):**<br><span style='color:inherit; font-size:20px'>{inventory_cost:,.0f} GP</span>", unsafe_allow_html=True)
+        st.markdown(f"**Unsold Inventory:**<br><span style='color:inherit; font-size:20px'>{inventory_cost:,.0f} GP</span>", unsafe_allow_html=True)
+    with colC:
+        p_color = "green" if total_profit >= 0 else "red"
+        st.markdown(f"**Total Profit:**<br><span style='color:{p_color}; font-size:20px'>{total_profit:,.0f} GP</span>", unsafe_allow_html=True)
     
     st.write("") # spacing
     with st.expander("View Ledger Logs", expanded=False):
