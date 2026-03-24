@@ -140,7 +140,7 @@ def is_stale():
 # --- GE Flips Engine ---
 st.header("GE Flips")
 
-sum_target_buys = 0
+sum_market_buys = 0
 components_data = []
 
 # If the API cache itself is older than 120s, everything is stale
@@ -149,6 +149,10 @@ data_is_stale = is_stale()
 for cid in COMPONENTS:
     d = get_item_data(cid)
     raw_low = d.get("low", 0)
+    
+    # What the raw market dictates as the next competitive bid
+    market_buy_price = (raw_low + 1172) if raw_low > 0 else 0
+    sum_market_buys += market_buy_price
     
     # Avoid bidding against ourselves if we already hold the lowest price or higher
     my_active_bids = df[(df["item_id"] == cid) & (df["status"] == "Buying")]
@@ -171,20 +175,19 @@ for cid in COMPONENTS:
         "stale": data_is_stale,
         "raw_low": raw_low
     })
-    sum_target_buys += target_buy
 
 set_data = get_item_data(SET_ID)
 raw_high = set_data.get("high", 0)
 target_sell = raw_high - 1 if raw_high > 0 else 0
 set_stale = data_is_stale
 
-# Net Profit = (Target_Sell * 0.98) - Sum(Target_Buy_Prices)
-net_profit = (target_sell * 0.98) - sum_target_buys
-break_even = sum_target_buys / 0.98 if sum_target_buys > 0 else 0
+# Net Profit = (Target_Sell * 1% Tax) - Pure Market Buys
+net_profit = (target_sell * 0.99) - sum_market_buys
+break_even = sum_market_buys / 0.99 if sum_market_buys > 0 else 0
 
 col1, col2 = st.columns([2, 1])
 with col1:
-    st.metric("Total Bid (Sum)", f"{sum_target_buys:,.0f} GP")
+    st.metric("Total Bid (Sum)", f"{sum_market_buys:,.0f} GP")
     
 col3, col4 = st.columns([2, 1])
 with col3:
@@ -467,9 +470,9 @@ st.divider()
 st.subheader("History & Profit Metrics")
 if not df.empty:
     # --- Realized Profit Calculation ---
-    total_revenue = (df[df["status"] == "Sold"]["price"] * df[df["status"] == "Sold"]["quantity"] * 0.98).sum()
+    total_revenue = (df[df["status"] == "Sold"]["price"] * df[df["status"] == "Sold"]["quantity"] * 0.99).sum()
     
-    buy_df = df[df["status"].isin(["Owned", "Buying"])]
+    buy_df = df[df["status"] == "Owned"]
     avg_costs = {}
     for item_id, group in buy_df.groupby("item_id"):
         avg_costs[item_id] = (group["price"] * group["quantity"]).sum() / group["quantity"].sum()
