@@ -105,7 +105,8 @@ SETS_CONFIG = {
         "components": [
             {"id": 29028, "name": "Blood moon helm", "limit": 15},
             {"id": 29022, "name": "Blood moon chestplate", "limit": 15},
-            {"id": 29025, "name": "Blood moon tassets", "limit": 15}
+            {"id": 29025, "name": "Blood moon tassets", "limit": 15},
+            {"id": 28997, "name": "Dual macuahuitl", "limit": 15}
         ]
     },
     "Blue Moon": {
@@ -114,7 +115,8 @@ SETS_CONFIG = {
         "components": [
             {"id": 29019, "name": "Blue moon helm", "limit": 15},
             {"id": 29013, "name": "Blue moon chestplate", "limit": 15},
-            {"id": 29016, "name": "Blue moon tassets", "limit": 15}
+            {"id": 29016, "name": "Blue moon tassets", "limit": 15},
+            {"id": 28988, "name": "Blue moon spear", "limit": 15}
         ]
     },
     "Eclipse Moon": {
@@ -123,7 +125,8 @@ SETS_CONFIG = {
         "components": [
             {"id": 29010, "name": "Eclipse moon helm", "limit": 15},
             {"id": 29004, "name": "Eclipse moon chestplate", "limit": 15},
-            {"id": 29007, "name": "Eclipse moon tassets", "limit": 15}
+            {"id": 29007, "name": "Eclipse moon tassets", "limit": 15},
+            {"id": 29000, "name": "Eclipse atlatl", "limit": 15}
         ]
     },
     "Virtus": {
@@ -250,7 +253,7 @@ for s_name, cfg in SETS_CONFIG.items():
     profit_per_set = (target_sell * 0.98) - market_buys
     
     min_comp_limit = min([c["limit"] for c in cfg["components"]]) if cfg["components"] else 1
-    ge_limit = min(cfg["set_limit"], min_comp_limit)
+    ge_limit = min_comp_limit # Only bound by the components we have to BUY
     
     gp_limit = int(available_gp // market_buys) if market_buys > 0 else 0
     if available_gp <= 1:
@@ -280,11 +283,12 @@ for s_name, cfg in SETS_CONFIG.items():
     })
 
 dash_df = pd.DataFrame(dash_data).sort_values("Max Opportunity", ascending=False).reset_index(drop=True)
+dash_df.insert(0, "Rank", range(1, len(dash_df) + 1))
 dash_df["Profit/Set"] = dash_df["Profit/Set"].apply(lambda x: f"{x:,.0f} GP")
 dash_df["Max Opportunity"] = dash_df["Max Opportunity"].apply(lambda x: f"{x:,.0f} GP")
-dash_df["Turnover"] = dash_df["Turnover"].apply(lambda x: f"~{x:,.0f}m")
+dash_df["Turnover"] = dash_df["Turnover"].apply(lambda x: f"~{x:,.0f} mins")
 
-st.dataframe(dash_df, use_container_width=True)
+st.dataframe(dash_df, hide_index=True, use_container_width=True)
 st.divider()
 
 # --- Active Set Selection ---
