@@ -69,17 +69,97 @@ df_all["price"] = pd.to_numeric(df_all["price"], errors='coerce').fillna(0).asty
 df_all["quantity"] = pd.to_numeric(df_all["quantity"], errors='coerce').fillna(0).astype(int)
 
 # Filter for current user securely
-df = df_all[df_all["user_email"] == current_user]
+settings_row = df_all[(df_all["user_email"] == current_user) & (df_all["item_id"] == 0)]
+available_gp = float(settings_row["price"].values[0]) if not settings_row.empty else 0.0
 
-ITEMS = {
-    3481: "Gilded platebody",
-    3483: "Gilded platelegs",
-    3486: "Gilded full helm",
-    3488: "Gilded kiteshield",
-    13036: "Gilded armour set (lg)"
+df = df_all[(df_all["user_email"] == current_user) & (df_all["item_id"] != 0)]
+
+with st.sidebar:
+    st.header("⚙️ Configuration")
+    new_gp = st.number_input("Available GP to Flip", value=available_gp, step=1000000.0)
+    if st.button("Save Settings"):
+        if not settings_row.empty:
+            idx = settings_row.index[0]
+            df_all.at[idx, "price"] = float(new_gp)
+        else:
+            new_row = {"user_email": current_user, "item_id": 0, "item_name": "Bankroll", "price": float(new_gp), "quantity": 1, "status": "Settings", "timestamp": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())}
+            df_all = pd.concat([df_all, pd.DataFrame([new_row])], ignore_index=True)
+        conn.update(worksheet="Sheet1", data=df_all)
+        st.cache_data.clear()
+        st.rerun()
+
+SETS_CONFIG = {
+    "Gilded": {
+        "set_id": 13036,
+        "set_limit": 8,
+        "components": [
+            {"id": 3481, "name": "Gilded platebody", "limit": 8},
+            {"id": 3483, "name": "Gilded platelegs", "limit": 8},
+            {"id": 3486, "name": "Gilded full helm", "limit": 8},
+            {"id": 3488, "name": "Gilded kiteshield", "limit": 8}
+        ]
+    },
+    "Blood Moon": {
+        "set_id": 31136,
+        "set_limit": 2,
+        "components": [
+            {"id": 29028, "name": "Blood moon helm", "limit": 15},
+            {"id": 29022, "name": "Blood moon chestplate", "limit": 15},
+            {"id": 29025, "name": "Blood moon tassets", "limit": 15}
+        ]
+    },
+    "Blue Moon": {
+        "set_id": 31139,
+        "set_limit": 2,
+        "components": [
+            {"id": 29019, "name": "Blue moon helm", "limit": 15},
+            {"id": 29013, "name": "Blue moon chestplate", "limit": 15},
+            {"id": 29016, "name": "Blue moon tassets", "limit": 15}
+        ]
+    },
+    "Eclipse Moon": {
+        "set_id": 31142,
+        "set_limit": 2,
+        "components": [
+            {"id": 29010, "name": "Eclipse moon helm", "limit": 15},
+            {"id": 29004, "name": "Eclipse moon chestplate", "limit": 15},
+            {"id": 29007, "name": "Eclipse moon tassets", "limit": 15}
+        ]
+    },
+    "Virtus": {
+        "set_id": 31148,
+        "set_limit": 2,
+        "components": [
+            {"id": 26241, "name": "Virtus mask", "limit": 8},
+            {"id": 26243, "name": "Virtus robe top", "limit": 8},
+            {"id": 26245, "name": "Virtus robe bottom", "limit": 8}
+        ]
+    },
+    "Justiciar": {
+        "set_id": 22438,
+        "set_limit": 5,
+        "components": [
+            {"id": 22326, "name": "Justiciar faceguard", "limit": 8},
+            {"id": 22327, "name": "Justiciar chestguard", "limit": 8},
+            {"id": 22328, "name": "Justiciar legguards", "limit": 8}
+        ]
+    },
+    "Masori (f)": {
+        "set_id": 27355,
+        "set_limit": 5,
+        "components": [
+            {"id": 27235, "name": "Masori mask (f)", "limit": 8},
+            {"id": 27238, "name": "Masori body (f)", "limit": 8},
+            {"id": 27241, "name": "Masori chaps (f)", "limit": 8}
+        ]
+    }
 }
-COMPONENTS = [3481, 3483, 3486, 3488]
-SET_ID = 13036
+
+ITEMS = {}
+for key, cfg in SETS_CONFIG.items():
+    ITEMS[cfg["set_id"]] = f"{key} armour set"
+    for comp in cfg["components"]:
+        ITEMS[comp["id"]] = comp["name"]
 
 WIKI_LINK = "https://prices.runescape.wiki/osrs/item/"
 
@@ -125,8 +205,25 @@ def fetch_timeseries(item_id):
     except Exception:
         return []
 
+@st.cache_data(ttl=300)
+def fetch_24h_volume():
+    try:
+        user_agent = st.secrets["USER_AGENT"]
+    except Exception:
+        user_agent = "GE Flips Local"
+    
+    headers = {"User-Agent": user_agent}
+    url = "https://prices.runescape.wiki/api/v1/osrs/24h"
+    try:
+        response = requests.get(url, headers=headers)
+        response.raise_for_status()
+        return response.json().get("data", {})
+    except Exception:
+        return {}
+
 api_data = fetch_prices()
 prices_data = api_data.get("items", {})
+vol_data = fetch_24h_volume()
 fetch_time = api_data.get("fetched_at", 0)
 current_time = time.time()
 
@@ -140,11 +237,76 @@ def is_stale():
 # --- GE Flips Engine ---
 st.header("GE Flips")
 
+data_is_stale = is_stale()
+
+st.subheader("📊 Most Profitable Sets")
+dash_data = []
+
+for s_name, cfg in SETS_CONFIG.items():
+    s_id = cfg["set_id"]
+    market_buys = sum([(get_item_data(c["id"]).get("low", 0) + 1172) if get_item_data(c["id"]).get("low", 0) > 0 else 0 for c in cfg["components"]])
+    raw_high = get_item_data(s_id).get("high", 0)
+    target_sell = raw_high - 1 if raw_high > 0 else 0
+    profit_per_set = (target_sell * 0.98) - market_buys
+    
+    min_comp_limit = min([c["limit"] for c in cfg["components"]]) if cfg["components"] else 1
+    ge_limit = min(cfg["set_limit"], min_comp_limit)
+    
+    gp_limit = int(available_gp // market_buys) if market_buys > 0 else 0
+    if available_gp <= 1:
+        gp_limit = ge_limit # Unbounded by GP if not configured
+        
+    actual_max_sets = min(ge_limit, gp_limit)
+    max_opportunity = profit_per_set * actual_max_sets
+    
+    volumes = []
+    for c in cfg["components"]:
+        vd = vol_data.get(str(c["id"]), {})
+        vol = vd.get("highPriceVolume", 0) + vd.get("lowPriceVolume", 0)
+        volumes.append(vol)
+        
+    bottleneck_vol = min(volumes) if volumes else 1
+    if bottleneck_vol <= 0: bottleneck_vol = 1
+    
+    turnover_hz = bottleneck_vol / 24.0 # sets per hour
+    mins_per_set = 60.0 / turnover_hz if turnover_hz > 0 else 999
+    
+    dash_data.append({
+        "Set": s_name,
+        "Profit/Set": profit_per_set,
+        "Max Opportunity": max_opportunity,
+        "Max Sets (GE+GP)": actual_max_sets,
+        "Turnover": mins_per_set
+    })
+
+dash_df = pd.DataFrame(dash_data).sort_values("Max Opportunity", ascending=False).reset_index(drop=True)
+dash_df["Profit/Set"] = dash_df["Profit/Set"].apply(lambda x: f"{x:,.0f} GP")
+dash_df["Max Opportunity"] = dash_df["Max Opportunity"].apply(lambda x: f"{x:,.0f} GP")
+dash_df["Turnover"] = dash_df["Turnover"].apply(lambda x: f"~{x:,.0f}m")
+
+st.dataframe(dash_df, use_container_width=True)
+st.divider()
+
+# --- Active Set Selection ---
+def get_most_recent_set():
+    if df.empty:
+        return "Gilded"
+    recent_item_id = df.sort_values("timestamp", ascending=False).iloc[0]["item_id"]
+    for s_name, cfg in SETS_CONFIG.items():
+        if recent_item_id == cfg["set_id"] or recent_item_id in [c["id"] for c in cfg["components"]]:
+            return s_name
+    return "Gilded"
+
+all_set_names = list(SETS_CONFIG.keys())
+default_idx = all_set_names.index(get_most_recent_set())
+
+selected_set_name = st.selectbox("🎯 Active Trading Profile", all_set_names, index=default_idx)
+ACTIVE_CONFIG = SETS_CONFIG[selected_set_name]
+COMPONENTS = [c["id"] for c in ACTIVE_CONFIG["components"]]
+SET_ID = ACTIVE_CONFIG["set_id"]
+
 sum_market_buys = 0
 components_data = []
-
-# If the API cache itself is older than 120s, everything is stale
-data_is_stale = is_stale()
 
 for cid in COMPONENTS:
     d = get_item_data(cid)
@@ -454,7 +616,7 @@ if not df.empty:
             st.markdown(f"**Loose pieces:** {', '.join(loose_items_list)}")
         
         missing = [cid for cid in COMPONENTS if loose_inventory.get(cid, 0) < 1]
-        if 0 < len(missing) < 4:
+        if 0 < len(missing) < len(COMPONENTS):
             st.write("You need these pieces to form another set:")
             for m_id in missing:
                 c_name = ITEMS[m_id]
@@ -467,51 +629,80 @@ st.divider()
 
 st.subheader("History & Profit Metrics")
 if not df.empty:
-    # --- Realized Profit Calculation ---
-    total_revenue = (df[df["status"] == "Sold"]["price"] * df[df["status"] == "Sold"]["quantity"] * 0.98).sum()
-    # --- Realized Profit via Exact FIFO ---
+    overall_total_revenue = 0
+    overall_total_cogs = 0
+    overall_inventory_cost = 0
+
+    profit_breakdown = []
+    
+    # Pre-process owned rows for Exact FIFO universally
     owned_df = df[df["status"] == "Owned"].copy()
     owned_df["timestamp"] = pd.to_datetime(owned_df["timestamp"], errors="coerce")
     owned_df = owned_df.sort_values("timestamp")
     
-    prices_lists = {cid: [] for cid in COMPONENTS}
-    
-    for _, row in owned_df.iterrows():
-        sid = row["item_id"]
-        qty = int(row["quantity"])
-        price = float(row["price"])
+    for s_name, cfg in SETS_CONFIG.items():
+        s_id = cfg["set_id"]
+        c_ids = [c["id"] for c in cfg["components"]]
         
-        # Expand explicit set buys into components
-        if sid == SET_ID:
-            comp_price = price / 4.0
-            for cid in COMPONENTS:
-                prices_lists[cid].extend([comp_price] * qty)
-        elif sid in COMPONENTS:
-            prices_lists[sid].extend([price] * qty)
+        sold_mask = (df["status"] == "Sold") & (df["item_id"].isin([s_id] + c_ids))
+        total_revenue = (df[sold_mask]["price"] * df[sold_mask]["quantity"] * 0.98).sum()
+        
+        sold_counts = df[sold_mask].groupby("item_id")["quantity"].sum().to_dict()
+        
+        set_owned_df = owned_df[owned_df["item_id"].isin([s_id] + c_ids)]
+        
+        prices_lists = {cid: [] for cid in c_ids}
+        
+        for _, row in set_owned_df.iterrows():
+            r_id = row["item_id"]
+            qty = int(row["quantity"])
+            price = float(row["price"])
             
-    total_cogs = 0
-    inventory_cost = 0
-    
-    for cid in COMPONENTS:
-        n_sold = int(sold_counts.get(cid, 0) + sold_counts.get(SET_ID, 0))
-        prices = prices_lists[cid]
+            if r_id == s_id:
+                comp_price = price / float(len(c_ids))
+                for cid in c_ids:
+                    prices_lists[cid].extend([comp_price] * qty)
+            elif r_id in c_ids:
+                prices_lists[r_id].extend([price] * qty)
+                
+        set_cogs = 0
+        set_inv_cost = 0
         
-        # FIFO bounds
-        cogs = sum(prices[:n_sold])
-        inv = sum(prices[n_sold:])
+        for cid in c_ids:
+            n_sold = int(sold_counts.get(cid, 0) + sold_counts.get(s_id, 0))
+            prices = prices_lists[cid]
+            cogs = sum(prices[:n_sold])
+            inv = sum(prices[n_sold:])
+            set_cogs += cogs
+            set_inv_cost += inv
+            
+        realized_profit = total_revenue - set_cogs
+        overall_total_revenue += total_revenue
+        overall_total_cogs += set_cogs
+        overall_inventory_cost += set_inv_cost
         
-        total_cogs += cogs
-        inventory_cost += inv
-
-    realized_profit = total_revenue - total_cogs
+        if total_revenue > 0 or set_inv_cost > 0:
+            profit_breakdown.append({
+                "Set": s_name,
+                "Realized Profit": realized_profit,
+                "Unsold Value": set_inv_cost
+            })
+            
+    overall_realized_profit = overall_total_revenue - overall_total_cogs
 
     colA, colB = st.columns(2)
     with colA:
-        r_color = "green" if realized_profit >= 0 else "red"
-        st.markdown(f"**Realized Profit:**<br><span style='color:{r_color}; font-size:20px'>{realized_profit:,.0f} GP</span>", unsafe_allow_html=True)
+        r_color = "green" if overall_realized_profit >= 0 else "red"
+        st.markdown(f"**Realized Profit (All Sets):**<br><span style='color:{r_color}; font-size:20px'>{overall_realized_profit:,.0f} GP</span>", unsafe_allow_html=True)
     with colB:
-        st.markdown(f"**Unsold Inventory:**<br><span style='color:inherit; font-size:20px'>{inventory_cost:,.0f} GP</span>", unsafe_allow_html=True)
+        st.markdown(f"**Unsold Inventory (All Sets):**<br><span style='color:inherit; font-size:20px'>{overall_inventory_cost:,.0f} GP</span>", unsafe_allow_html=True)
     
+    if profit_breakdown:
+        breakdown_df = pd.DataFrame(profit_breakdown)
+        breakdown_df["Realized Profit"] = breakdown_df["Realized Profit"].apply(lambda x: f"{x:,.0f} GP")
+        breakdown_df["Unsold Value"] = breakdown_df["Unsold Value"].apply(lambda x: f"{x:,.0f} GP")
+        st.dataframe(breakdown_df, hide_index=True, use_container_width=True)
+        
     st.write("") # spacing
     with st.expander("View Ledger Logs", expanded=False):
         for i, row in df.sort_values(by="timestamp", ascending=False).head(20).iterrows():
