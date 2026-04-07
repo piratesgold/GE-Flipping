@@ -248,20 +248,52 @@ function monitorOSRS() {
   
   // Send Discord webhook
   if (alerts.length > 0) {
-    var payload = {
-      content: "🔔 **GE Flips Alert**\n" + alerts.join("\n\n")
-    };
-    try {
-      UrlFetchApp.fetch(DISCORD_WEBHOOK, {
-        method: "post",
-        contentType: "application/json",
-        payload: JSON.stringify(payload),
-        muteHttpExceptions: true
-      });
-      Logger.log("Sent " + alerts.length + " alerts to Discord.");
-    } catch (e) {
-      Logger.log("Discord webhook failed: " + e);
+    var payloads = [];
+    var currentPayload = "🔔 **GE Flips Alert**\n";
+    
+    for (var a = 0; a < alerts.length; a++) {
+      // Keep well under 2000 char Discord max
+      if (currentPayload.length + alerts[a].length > 1800) {
+        payloads.push(currentPayload);
+        currentPayload = "🔔 **GE Flips Alert (Cont.)**\n";
+      }
+      currentPayload += alerts[a] + "\n\n";
     }
+    payloads.push(currentPayload);
+
+    for (var p = 0; p < payloads.length; p++) {
+      var payloadStr = JSON.stringify({ content: payloads[p] });
+      var success = false;
+      var retries = 3;
+      var backoff = 1500;
+      
+      while (!success && retries > 0) {
+        try {
+          var res = UrlFetchApp.fetch(DISCORD_WEBHOOK, {
+            method: "post",
+            contentType: "application/json",
+            payload: payloadStr,
+            muteHttpExceptions: true
+          });
+          
+          var code = res.getResponseCode();
+          if (code === 429) {
+            Logger.log("Discord rate limited. Retrying in " + backoff + "ms");
+            Utilities.sleep(backoff);
+            backoff *= 2;
+            retries--;
+          } else {
+            success = true;
+          }
+        } catch (e) {
+          Logger.log("Discord webhook failed: " + e);
+          Utilities.sleep(backoff);
+          backoff *= 2;
+          retries--;
+        }
+      }
+    }
+    Logger.log("Processed " + alerts.length + " alerts via webhook.");
   } else {
     Logger.log("No alerts. All quiet.");
   }
