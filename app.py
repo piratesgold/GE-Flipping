@@ -74,10 +74,29 @@ available_gp = float(settings_row["price"].values[0]) if not settings_row.empty 
 
 df = df_all[(df_all["user_email"] == current_user) & (df_all["item_id"] != 0)]
 
+def parse_gp_input(val):
+    if not val: return 0.0
+    val = str(val).upper().replace(",", "").replace(" ", "")
+    m = 1
+    if val.endswith("M"):
+        m = 1_000_000
+        val = val[:-1]
+    elif val.endswith("K"):
+        m = 1_000
+        val = val[:-1]
+    elif val.endswith("B"):
+        m = 1_000_000_000
+        val = val[:-1]
+    try:
+        return float(val) * m
+    except:
+        return 0.0
+
 with st.sidebar:
     st.header("⚙️ Configuration")
-    new_gp = st.number_input("Available GP to Flip", value=available_gp, step=1000000.0)
+    new_gp_raw = st.text_input("Available GP to Flip", value=f"{available_gp:,.0f}")
     if st.button("Save Settings"):
+        new_gp = parse_gp_input(new_gp_raw)
         if not settings_row.empty:
             idx = settings_row.index[0]
             df_all.at[idx, "price"] = float(new_gp)
@@ -292,17 +311,19 @@ st.dataframe(dash_df, hide_index=True, use_container_width=True)
 st.divider()
 
 # --- Active Set Selection ---
+all_set_names = dash_df["Set"].tolist()
+
 def get_most_recent_set():
     if df.empty:
-        return "Gilded"
+        return all_set_names[0]
     recent_item_id = df.sort_values("timestamp", ascending=False).iloc[0]["item_id"]
     for s_name, cfg in SETS_CONFIG.items():
         if recent_item_id == cfg["set_id"] or recent_item_id in [c["id"] for c in cfg["components"]]:
             return s_name
-    return "Gilded"
+    return all_set_names[0]
 
-all_set_names = list(SETS_CONFIG.keys())
-default_idx = all_set_names.index(get_most_recent_set())
+default_set = get_most_recent_set()
+default_idx = all_set_names.index(default_set) if default_set in all_set_names else 0
 
 selected_set_name = st.selectbox("🎯 Active Trading Profile", all_set_names, index=default_idx)
 ACTIVE_CONFIG = SETS_CONFIG[selected_set_name]
@@ -483,7 +504,7 @@ st.header("Ledger & Inventory")
 with st.expander("Log Transaction", expanded=False):
     with st.form("log_tx"):
         tx_item = st.selectbox("Item", list(ITEMS.values()))
-        tx_price = st.number_input("Actual Price (GP)", min_value=0, step=1000)
+        tx_price_raw = st.text_input("Actual Price (GP)", value="0")
         tx_quantity = st.number_input("Quantity", min_value=1, value=1, step=1)
         tx_status = st.selectbox("Status", ["Buying", "Owned", "Sold"])
         
@@ -493,7 +514,7 @@ with st.expander("Log Transaction", expanded=False):
                 "user_email": current_user,
                 "item_id": int(item_id),
                 "item_name": tx_item,
-                "price": int(tx_price),
+                "price": int(parse_gp_input(tx_price_raw)),
                 "quantity": int(tx_quantity),
                 "status": tx_status,
                 "timestamp": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
@@ -559,11 +580,11 @@ if not active_df.empty:
                         st.rerun()
             with colB:
                 def set_reset_state(i, p):
-                    st.session_state[f"prc_{i}"] = int(p)
+                    st.session_state[f"prc_{i}"] = f"{int(p):,}"
                     
                 with st.popover("✏️ Edit", use_container_width=True):
                     new_qty = st.number_input("Qty", value=int(row["quantity"]), min_value=1, step=1, key=f"qty_{idx}")
-                    new_price = st.number_input("Price (GP)", value=int(row["price"]), min_value=0, step=1000, key=f"prc_{idx}")
+                    new_price_raw = st.text_input("Price (GP)", value=f"{row['price']:,.0f}", key=f"prc_{idx}")
                     
                     target_p = target_prices.get(row['item_id'], 0)
                     if target_p > 0:
@@ -575,7 +596,7 @@ if not active_df.empty:
 
                     if st.button("Update", key=f"upd_{idx}", use_container_width=True):
                         df_all.at[idx, "quantity"] = int(new_qty)
-                        df_all.at[idx, "price"] = int(new_price)
+                        df_all.at[idx, "price"] = int(parse_gp_input(new_price_raw))
                         conn.update(worksheet="Sheet1", data=df_all)
                         st.cache_data.clear()
                         st.rerun()
