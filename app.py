@@ -321,7 +321,14 @@ all_set_names = dash_df["Set"].tolist()
 def get_most_recent_set():
     if df.empty:
         return all_set_names[0]
-    recent_item_id = df.sort_values("timestamp", ascending=False).iloc[0]["item_id"]
+    
+    temp_df = df.copy()
+    temp_df["parsed_ts"] = pd.to_datetime(temp_df["timestamp"], errors="coerce")
+    
+    wip_df = temp_df[temp_df["status"].isin(["Buying", "Selling", "Owned"])]
+    target_df = wip_df if not wip_df.empty else temp_df
+    
+    recent_item_id = target_df.sort_values("parsed_ts", ascending=False).iloc[0]["item_id"]
     for s_name, cfg in SETS_CONFIG.items():
         if recent_item_id == cfg["set_id"] or recent_item_id in [c["id"] for c in cfg["components"]]:
             return s_name
@@ -570,7 +577,7 @@ if not active_df.empty:
                         if fill_qty == max_q:
                             df_all = df_all.drop(index=idx)
                         else:
-                            df_all.at[idx, "quantity"] = max_q - fill_qty
+                            df_all.loc[idx, "quantity"] = int(max_q - fill_qty)
                             
                         # Add to filled
                         new_status = "Owned" if row["status"] == "Buying" else "Sold"
@@ -594,14 +601,14 @@ if not active_df.empty:
                     target_p = target_prices.get(row['item_id'], 0)
                     if target_p > 0:
                         if st.button(f"Reset to {target_p:,}", key=f"reset_{idx}", on_click=set_reset_state, args=(idx, target_p), use_container_width=True):
-                            df_all.at[idx, "price"] = int(target_p)
+                            df_all.loc[idx, "price"] = int(target_p)
                             conn.update(worksheet="Sheet1", data=df_all)
                             st.cache_data.clear()
                             st.rerun()
 
                     if st.button("Update", key=f"upd_{idx}", use_container_width=True):
-                        df_all.at[idx, "quantity"] = int(new_qty)
-                        df_all.at[idx, "price"] = int(parse_gp_input(new_price_raw))
+                        df_all.loc[idx, "quantity"] = int(new_qty)
+                        df_all.loc[idx, "price"] = int(parse_gp_input(new_price_raw))
                         conn.update(worksheet="Sheet1", data=df_all)
                         st.cache_data.clear()
                         st.rerun()
