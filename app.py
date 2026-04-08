@@ -337,7 +337,7 @@ def get_most_recent_set():
 default_set = get_most_recent_set()
 default_idx = all_set_names.index(default_set) if default_set in all_set_names else 0
 
-selected_set_name = st.selectbox("🎯 Active Trading Profile", all_set_names, index=default_idx)
+selected_set_name = st.selectbox("🎯 Active Trading Profile", all_set_names, index=default_idx, key="active_set_selector")
 ACTIVE_CONFIG = SETS_CONFIG[selected_set_name]
 COMPONENTS = [c["id"] for c in ACTIVE_CONFIG["components"]]
 SET_ID = ACTIVE_CONFIG["set_id"]
@@ -544,7 +544,7 @@ st.subheader("Active Orders")
 target_prices = {c['id']: c['target_buy'] for c in components_data}
 target_prices[SET_ID] = target_sell
 
-active_df = df[df["status"].isin(["Buying", "Selling"])]
+active_df = df[df["status"].isin(["Buying", "Selling"]) & df["item_id"].isin([SET_ID] + COMPONENTS)]
 if not active_df.empty:
     for idx, row in active_df.iterrows():
         with st.container(border=True):
