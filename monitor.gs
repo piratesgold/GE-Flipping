@@ -166,12 +166,15 @@ function monitorOSRS() {
               // First run for this order — seed silently, no alert
               sheet.getRange(i + 1, colMap.lastAlertPrice + 1).setValue(marketPrice);
               sheet.getRange(i + 1, colMap.lastAlertType + 1).setValue("seeded");
-            } else {
+            } else if (lastAlertType !== "filled") {
               msg = "✅ **[LIKELY FILLED] " + itemName + "** (" + qty + "x)\n" +
                     "> Your Bid: `" + formatGP(orderPrice) + " GP`\n" +
                     "> Current Low: `" + formatGP(currentLow) + " GP`\n" +
                     "> *Your order is likely filled!*";
               alertType = "filled";
+            } else {
+              // Still technically filled, just track price wobble silently
+              sheet.getRange(i + 1, colMap.lastAlertPrice + 1).setValue(marketPrice);
             }
           }
         } else if (currentLow > orderPrice) {
@@ -210,12 +213,14 @@ function monitorOSRS() {
             if (lastAlert === 0) {
               sheet.getRange(i + 1, colMap.lastAlertPrice + 1).setValue(marketPrice);
               sheet.getRange(i + 1, colMap.lastAlertType + 1).setValue("seeded");
-            } else {
+            } else if (lastAlertType !== "sold") {
               msg = "✅ **[LIKELY SOLD] " + itemName + "** (" + qty + "x)\n" +
                     "> Your Ask: `" + formatGP(orderPrice) + " GP`\n" +
                     "> Current High: `" + formatGP(currentHigh) + " GP`\n" +
                     "> *Your set is likely sold!*";
               alertType = "sold";
+            } else {
+              sheet.getRange(i + 1, colMap.lastAlertPrice + 1).setValue(marketPrice);
             }
           }
         } else if (currentHigh < orderPrice) {
