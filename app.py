@@ -59,9 +59,14 @@ except Exception as e:
     df_all = pd.DataFrame(columns=["user_email", "item_id", "item_name", "price", "quantity", "status", "timestamp", "last_alert_price"])
 
 # Ensure required columns exist
-for col in ["last_alert_price", "last_known_high", "cooldown", "filled_notified"]:
+for col in ["last_alert_price", "last_known_high", "cooldown", "filled_notified", "last_alert_type"]:
     if col not in df_all.columns:
         df_all[col] = ""
+    else:
+        # Sanitize floats pandas might have magically converted from 'true' back to strings
+        df_all[col] = df_all[col].astype(str).str.lower().replace(
+            {"1.0": "true", "1": "true", "nan": "", "0.0": ""}
+        )
 
 # Sanitize formatting from fresh gsheets reads
 df_all["item_id"] = pd.to_numeric(df_all["item_id"], errors='coerce').fillna(0).astype(int)

@@ -97,7 +97,7 @@ function monitorOSRS() {
     // --- Handle "Owned" rows: filled notifications ---
     if (status === "Owned") {
       var filledFlag = String(row[colMap.filledNotified] || "").trim().toLowerCase();
-      if (filledFlag !== "true") {
+      if (filledFlag !== "true" && filledFlag !== "1.0" && filledFlag !== "1") {
         alerts.push(
           "✅ **[FILLED] " + itemName + "** (" + qty + "x)\n" +
           "> Final price: `" + formatGP(orderPrice) + " GP`\n" +
@@ -113,7 +113,8 @@ function monitorOSRS() {
     
     var lastAlert = parseNum(row[colMap.lastAlertPrice]);
     var lastKnownHigh = parseNum(row[colMap.lastKnownHigh]);
-    var isCooldown = String(row[colMap.cooldown] || "").trim().toLowerCase() === "true";
+    var rawCooldown = String(row[colMap.cooldown] || "").trim().toLowerCase();
+    var isCooldown = (rawCooldown === "true" || rawCooldown === "1.0" || rawCooldown === "1");
     var lastAlertType = String(row[colMap.lastAlertType] || "").trim().toLowerCase();
     
     var liveItem = pricesData[itemId] || {};
