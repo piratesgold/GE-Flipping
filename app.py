@@ -328,9 +328,9 @@ def get_most_recent_set():
     wip_df = temp_df[temp_df["status"].isin(["Buying", "Selling", "Owned"])]
     target_df = wip_df if not wip_df.empty else temp_df
     
-    recent_item_id = target_df.sort_values("parsed_ts", ascending=False).iloc[0]["item_id"]
+    recent_item_id = int(target_df.sort_values("parsed_ts", ascending=False).iloc[0]["item_id"])
     for s_name, cfg in SETS_CONFIG.items():
-        if recent_item_id == cfg["set_id"] or recent_item_id in [c["id"] for c in cfg["components"]]:
+        if recent_item_id == cfg["set_id"] or recent_item_id in [int(c["id"]) for c in cfg["components"]]:
             return s_name
     return all_set_names[0]
 
@@ -338,6 +338,7 @@ default_set = get_most_recent_set()
 default_idx = all_set_names.index(default_set) if default_set in all_set_names else 0
 
 selected_set_name = st.selectbox("🎯 Active Trading Profile", all_set_names, index=default_idx, key="active_set_selector")
+st.error(f"[App Debug] Backend matched default_set: '{default_set}' at idx: {default_idx}")
 ACTIVE_CONFIG = SETS_CONFIG[selected_set_name]
 COMPONENTS = [c["id"] for c in ACTIVE_CONFIG["components"]]
 SET_ID = ACTIVE_CONFIG["set_id"]
