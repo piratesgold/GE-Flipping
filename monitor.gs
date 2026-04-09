@@ -42,21 +42,12 @@ function monitorOSRS() {
     else if (header === "last_alert_type") colMap.lastAlertType = h;
   }
   
-  // Ensure state columns exist — add headers if missing
-  var lastCol = headers.length;
-  var requiredCols = [
-    {key: "lastAlertPrice", name: "last_alert_price"},
-    {key: "lastKnownHigh", name: "last_known_high"},
-    {key: "cooldown", name: "cooldown"},
-    {key: "filledNotified", name: "filled_notified"},
-    {key: "lastAlertType", name: "last_alert_type"}
-  ];
-  for (var c = 0; c < requiredCols.length; c++) {
-    if (colMap[requiredCols[c].key] === undefined) {
-      sheet.getRange(1, lastCol + 1).setValue(requiredCols[c].name);
-      colMap[requiredCols[c].key] = lastCol;
-      lastCol++;
-    }
+  // Ensure state columns exist. We specifically DO NOT mutate headers here to prevent 
+  // destructive race conditions with Python atomic overwrites. By aborting execution
+  // if headers are dangerously truncated, we gracefully fail this cycle.
+  if (headers.length < 10) {
+    Logger.log("Headers detectably corrupted or Streamlit lock active. Aborting run.");
+    return;
   }
 
   // Re-read data in case we just added columns
