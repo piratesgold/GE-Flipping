@@ -290,7 +290,7 @@ for s_name, cfg in SETS_CONFIG.items():
     market_buys = sum([(get_item_data(c["id"]).get("low", 0) + 1172) if get_item_data(c["id"]).get("low", 0) > 0 else 0 for c in cfg["components"]])
     raw_high = get_item_data(s_id).get("high", 0)
     target_sell = raw_high - 1 if raw_high > 0 else 0
-    profit_per_set = (target_sell * 0.99) - market_buys
+    profit_per_set = (target_sell * 0.98) - market_buys
     
     min_comp_limit = min([c["limit"] for c in cfg["components"]]) if cfg["components"] else 1
     ge_limit = min_comp_limit # Only bound by the components we have to BUY
@@ -410,9 +410,9 @@ raw_high = set_data.get("high", 0)
 target_sell = raw_high - 1 if raw_high > 0 else 0
 set_stale = data_is_stale
 
-# Net Profit = (Target_Sell * 1% Tax) - Pure Market Buys
-net_profit = (target_sell * 0.99) - sum_market_buys
-break_even = sum_market_buys / 0.99 if sum_market_buys > 0 else 0
+# Net Profit = (Target_Sell * 2% Tax) - Pure Market Buys
+net_profit = (target_sell * 0.98) - sum_market_buys
+break_even = sum_market_buys / 0.98 if sum_market_buys > 0 else 0
 
 col1, col2 = st.columns([2, 1])
 with col1:
@@ -767,7 +767,7 @@ if not df.empty:
         c_ids = [c["id"] for c in cfg["components"]]
         
         sold_mask = (df["status"] == "Sold") & (df["item_id"].isin([s_id] + c_ids))
-        total_revenue = (df[sold_mask]["price"] * df[sold_mask]["quantity"] * 0.99).sum()
+        total_revenue = (df[sold_mask]["price"] * df[sold_mask]["quantity"] * 0.98).sum()
         
         sold_counts = df[sold_mask].groupby("item_id")["quantity"].sum().to_dict()
         
