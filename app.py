@@ -633,12 +633,23 @@ if not active_df.empty:
                     ts_5m = fetch_5m_timeseries(row["item_id"])
                     
                     est_vol = 0
+                    order_price = int(row["price"])
                     for point in ts_5m:
                         if point.get("timestamp", 0) >= order_ts:
-                            if row["status"] == "Buying":
-                                est_vol += point.get("lowPriceVolume", 0)
-                            elif row["status"] == "Selling":
-                                est_vol += point.get("highPriceVolume", 0)
+                            if row["status"] == "Buying" and point.get("avgLowPrice"):
+                                avg_low = point.get("avgLowPrice", 0)
+                                if avg_low > 0:
+                                    if avg_low <= order_price * 1.005:
+                                        est_vol += point.get("lowPriceVolume", 0)
+                                    if avg_low < order_price * 0.995:
+                                        est_vol = int(row['quantity'])
+                            elif row["status"] == "Selling" and point.get("avgHighPrice"):
+                                avg_high = point.get("avgHighPrice", 0)
+                                if avg_high > 0:
+                                    if avg_high >= order_price * 0.995:
+                                        est_vol += point.get("highPriceVolume", 0)
+                                    if avg_high > order_price * 1.005:
+                                        est_vol = int(row['quantity'])
                     
                     if est_vol > 0:
                         volume_text = f" &nbsp; 📊 *~{est_vol}/{row['quantity']} estimated filled*"
