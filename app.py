@@ -212,7 +212,7 @@ def fetch_prices():
         # Attach our own timestamp to know when WE last checked
         return {"fetched_at": time.time(), "items": data}
     except Exception as e:
-        st.error(f"Failed to fetch prices: {e}")
+        st.warning(f"Failed to fetch prices: {e}")
         return {"fetched_at": 0, "items": {}}
 
 @st.cache_data(ttl=300)
@@ -225,6 +225,22 @@ def fetch_timeseries(item_id):
     
     headers = {"User-Agent": user_agent}
     url = f"https://prices.runescape.wiki/api/v1/osrs/timeseries?timestep=1h&id={item_id}"
+    try:
+        response = requests.get(url, headers=headers)
+        response.raise_for_status()
+        return response.json().get("data", [])
+    except Exception:
+        return []
+
+@st.cache_data(ttl=300)
+def fetch_5m_timeseries(item_id):
+    try:
+        user_agent = st.secrets["USER_AGENT"]
+    except Exception:
+        user_agent = "GE Flips Local"
+    
+    headers = {"User-Agent": user_agent}
+    url = f"https://prices.runescape.wiki/api/v1/osrs/timeseries?timestep=5m&id={item_id}"
     try:
         response = requests.get(url, headers=headers)
         response.raise_for_status()
@@ -274,7 +290,7 @@ for s_name, cfg in SETS_CONFIG.items():
     market_buys = sum([(get_item_data(c["id"]).get("low", 0) + 1172) if get_item_data(c["id"]).get("low", 0) > 0 else 0 for c in cfg["components"]])
     raw_high = get_item_data(s_id).get("high", 0)
     target_sell = raw_high - 1 if raw_high > 0 else 0
-    profit_per_set = (target_sell * 0.98) - market_buys
+    profit_per_set = (target_sell * 0.99) - market_buys
     
     min_comp_limit = min([c["limit"] for c in cfg["components"]]) if cfg["components"] else 1
     ge_limit = min_comp_limit # Only bound by the components we have to BUY
@@ -337,8 +353,18 @@ def get_most_recent_set():
 default_set = get_most_recent_set()
 default_idx = all_set_names.index(default_set) if default_set in all_set_names else 0
 
-selected_set_name = st.selectbox("🎯 Active Trading Profile", all_set_names, index=default_idx, key="active_set_selector")
-st.error(f"[App Debug] Backend matched default_set: '{default_set}' at idx: {default_idx}")
+def sync_top():
+    if "active_set_selector_bottom" in st.session_state:
+        st.session_state["active_set_selector"] = st.session_state["active_set_selector_bottom"]
+
+def sync_bottom():
+    if "active_set_selector" in st.session_state:
+        st.session_state["active_set_selector_bottom"] = st.session_state["active_set_selector"]
+
+if "active_set_selector" not in st.session_state:
+    st.session_state["active_set_selector"] = all_set_names[default_idx]
+
+selected_set_name = st.selectbox("🎯 Active Trading Profile", all_set_names, key="active_set_selector", on_change=sync_bottom)
 ACTIVE_CONFIG = SETS_CONFIG[selected_set_name]
 COMPONENTS = [c["id"] for c in ACTIVE_CONFIG["components"]]
 SET_ID = ACTIVE_CONFIG["set_id"]
@@ -384,9 +410,9 @@ raw_high = set_data.get("high", 0)
 target_sell = raw_high - 1 if raw_high > 0 else 0
 set_stale = data_is_stale
 
-# Net Profit = (Target_Sell * 2% Tax) - Pure Market Buys
-net_profit = (target_sell * 0.98) - sum_market_buys
-break_even = sum_market_buys / 0.98 if sum_market_buys > 0 else 0
+# Net Profit = (Target_Sell * 1% Tax) - Pure Market Buys
+net_profit = (target_sell * 0.99) - sum_market_buys
+break_even = sum_market_buys / 0.99 if sum_market_buys > 0 else 0
 
 col1, col2 = st.columns([2, 1])
 with col1:
@@ -419,7 +445,7 @@ st.markdown(f"<h3 style='text-align: center'>Net Profit: <span style='color:{pro
 st.markdown(f"<p style='text-align: center'><b>Break-even Set Ask:</b> {break_even:,.0f} GP</p>", unsafe_allow_html=True)
 
 if set_stale:
-    st.error("⚠️ Set Sell Price is STALE (> 120s old)")
+    st.warning("⚠️ Set Sell Price is STALE (> 120s old)")
 
 # Wiki link for the set
 st.markdown(f"📈 [View Set Price Chart]({WIKI_LINK}{SET_ID})", unsafe_allow_html=True)
@@ -540,6 +566,33 @@ with st.expander("Log Transaction", expanded=False):
             time.sleep(1)
             st.rerun()
 
+st.subheader("🚨 Master Alerts")
+# Iterate all active items indiscriminately for alerts
+global_active_df = df[df["status"].isin(["Buying", "Selling"])]
+alerts_found = False
+
+if not global_active_df.empty:
+    for _, row in global_active_df.iterrows():
+        # Get actual native API margins
+        live_item_data = prices_data.get(str(row['item_id']), {})
+        actual_low = live_item_data.get("low", 0)
+        actual_high = live_item_data.get("high", 0)
+        
+        cooldown_val = row.get("cooldown") if "cooldown" in row.index else ""
+        is_cooldown = str(cooldown_val).strip().lower() == "true" if not pd.isna(cooldown_val) else False
+
+        if row["status"] == "Buying" and row["price"] < actual_low and actual_low > 0 and not is_cooldown:
+            st.warning(f"**{row['item_name']}** — Outbid by {(actual_low - row['price']):,.0f} GP! (Current Low: {actual_low:,.0f})")
+            alerts_found = True
+        elif row["status"] == "Selling" and row["price"] > actual_high and actual_high > 0:
+            st.warning(f"**{row['item_name']}** — Undercut by {(row['price'] - actual_high):,.0f} GP! (Current High: {actual_high:,.0f})")
+            alerts_found = True
+
+if not alerts_found:
+    st.success("No active orders are currently outbid or undercut!")
+
+st.divider()
+
 st.subheader("Active Orders")
 
 target_prices = {c['id']: c['target_buy'] for c in components_data}
@@ -553,21 +606,46 @@ if not active_df.empty:
             status_color = "green" if row["status"] == "Buying" else "red"
             warning_icon = ""
             
-            # Check cooldown state from the sheet
+            # Check cooldown state
             cooldown_val = row.get("cooldown") if "cooldown" in row.index else ""
             is_cooldown = str(cooldown_val).strip().lower() == "true" if not pd.isna(cooldown_val) else False
+            
+            # Setup native margin limits
+            live_item_data = prices_data.get(str(row['item_id']), {})
+            actual_low = live_item_data.get("low", 0)
+            actual_high = live_item_data.get("high", 0)
             
             if is_cooldown:
                 status_color = "#3498db"
                 warning_icon = "🧊 *(Cooldown — Price Squeezed)*"
-            elif row["status"] == "Buying" and row["price"] < target_p:
+            elif row["status"] == "Buying" and row["price"] < actual_low and actual_low > 0:
                 status_color = "orange"
                 warning_icon = "⚠️ *(Outbid)*"
-            elif row["status"] == "Selling" and row["price"] > target_p:
+            elif row["status"] == "Selling" and row["price"] > actual_high and actual_high > 0:
                 status_color = "orange"
                 warning_icon = "⚠️ *(Undercut)*"
                 
-            st.markdown(f"**<span style='color:{status_color}'>{row['status']}</span> {row['item_name']} {warning_icon}** &mdash; {row['quantity']}x @ {row['price']:,.0f} GP", unsafe_allow_html=True)
+            # Compute Volume Traded tracking
+            volume_text = ""
+            if row["timestamp"]:
+                try:
+                    order_ts = pd.to_datetime(row["timestamp"]).timestamp()
+                    ts_5m = fetch_5m_timeseries(row["item_id"])
+                    
+                    est_vol = 0
+                    for point in ts_5m:
+                        if point.get("timestamp", 0) >= order_ts:
+                            if row["status"] == "Buying":
+                                est_vol += point.get("lowPriceVolume", 0)
+                            elif row["status"] == "Selling":
+                                est_vol += point.get("highPriceVolume", 0)
+                    
+                    if est_vol > 0:
+                        volume_text = f" &nbsp; 📊 *~{est_vol}/{row['quantity']} estimated filled*"
+                except Exception:
+                    pass
+                
+            st.markdown(f"**<span style='color:{status_color}'>{row['status']}</span> {row['item_name']} {warning_icon}** &mdash; {row['quantity']}x @ {row['price']:,.0f} GP{volume_text}", unsafe_allow_html=True)
             colA, colB, colC = st.columns(3)
             with colA:
                 with st.popover("✅ Fill", use_container_width=True):
@@ -603,6 +681,8 @@ if not active_df.empty:
                     if target_p > 0:
                         if st.button(f"Reset to {target_p:,}", key=f"reset_{idx}", on_click=set_reset_state, args=(idx, target_p), use_container_width=True):
                             df_all.loc[idx, "price"] = int(target_p)
+                            df_all.loc[idx, "last_alert_price"] = ""
+                            df_all.loc[idx, "last_alert_type"] = ""
                             conn.update(worksheet="Sheet1", data=df_all)
                             st.cache_data.clear()
                             st.rerun()
@@ -610,6 +690,8 @@ if not active_df.empty:
                     if st.button("Update", key=f"upd_{idx}", use_container_width=True):
                         df_all.loc[idx, "quantity"] = int(new_qty)
                         df_all.loc[idx, "price"] = int(parse_gp_input(new_price_raw))
+                        df_all.loc[idx, "last_alert_price"] = ""
+                        df_all.loc[idx, "last_alert_type"] = ""
                         conn.update(worksheet="Sheet1", data=df_all)
                         st.cache_data.clear()
                         st.rerun()
@@ -623,6 +705,8 @@ else:
     st.info("No active orders.")
 
 st.divider()
+
+st.selectbox("🎯 Active Trading Profile (Mirror)", all_set_names, key="active_set_selector_bottom", on_change=sync_top)
 
 st.subheader("Inventory Work-in-Progress")
 if not df.empty:
@@ -683,7 +767,7 @@ if not df.empty:
         c_ids = [c["id"] for c in cfg["components"]]
         
         sold_mask = (df["status"] == "Sold") & (df["item_id"].isin([s_id] + c_ids))
-        total_revenue = (df[sold_mask]["price"] * df[sold_mask]["quantity"] * 0.98).sum()
+        total_revenue = (df[sold_mask]["price"] * df[sold_mask]["quantity"] * 0.99).sum()
         
         sold_counts = df[sold_mask].groupby("item_id")["quantity"].sum().to_dict()
         
