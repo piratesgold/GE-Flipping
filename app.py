@@ -643,6 +643,7 @@ if not active_df.empty:
                                         est_vol += point.get("lowPriceVolume", 0)
                                     if avg_low < order_price * 0.995:
                                         est_vol = int(row['quantity'])
+                                        break
                             elif row["status"] == "Selling" and point.get("avgHighPrice"):
                                 avg_high = point.get("avgHighPrice", 0)
                                 if avg_high > 0:
@@ -650,6 +651,9 @@ if not active_df.empty:
                                         est_vol += point.get("highPriceVolume", 0)
                                     if avg_high > order_price * 1.005:
                                         est_vol = int(row['quantity'])
+                                        break
+                    
+                    est_vol = min(est_vol, int(row['quantity']))
                     
                     if est_vol > 0:
                         volume_text = f" &nbsp; 📊 *~{est_vol}/{row['quantity']} estimated filled*"
